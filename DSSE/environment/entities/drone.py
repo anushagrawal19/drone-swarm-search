@@ -56,8 +56,9 @@ class DroneData:
 
     def recharge(self, drone_idx):
         # Recharge the specified drone to full battery
+        if self.batteries[drone_idx] <= 30:
+            print(f"[DEBUG] Drone {drone_idx} recharged to full battery: {self.batteries[drone_idx]}")
         self.batteries[drone_idx] = self.battery_capacity
-        print(f"[DEBUG] Drone {drone_idx} recharged to full battery: {self.batteries[drone_idx]}")
 
     def get_battery(self, drone_idx):
         # Returns the current battery level for the specified drone
