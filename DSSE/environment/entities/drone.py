@@ -49,7 +49,7 @@ class DroneData:
         # Decrease battery energy for one move
         if self.batteries[drone_idx] > 0:
             self.batteries[drone_idx] -= self.energy_per_move
-            print(f"[DEBUG] Drone {drone_idx} battery after move: {self.batteries[drone_idx]}")
+            # print(f"[DEBUG] Drone {drone_idx} battery after move: {self.batteries[drone_idx]}")
             return self.batteries[drone_idx]
         print(f"[DEBUG] Drone {drone_idx} has run out of battery.")
         return 0
