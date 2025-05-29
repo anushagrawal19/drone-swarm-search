@@ -5,12 +5,7 @@ class RechargeBase:
         self.grid_size = grid_size
 
         if position is None:
-            self.position = random.choice([
-                (0, 0),                                     # top-left corner
-                (0, self.grid_size - 1),                    # top-right corner
-                (self.grid_size - 1, 0),                    # bottom-left corner
-                (self.grid_size - 1, self.grid_size - 1)    # bottom-right corner
-        ])
+            self.position = (0, 0)
         else:
             self.position = position
 

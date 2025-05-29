@@ -22,11 +22,7 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
         default=0.0,
         leave_grid=0,
         exceed_timestep=0,
-        drones_failure=0,
-        search_cell=0,
         search_and_find=1000,
-        low_battery_move_towards_base=0,
-        energy_penalty=0,
     )
 
     def __init__(
@@ -46,6 +42,7 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
         probability_of_detection=1.0,
         pre_render_time=0,
         grid_cell_size=130,
+        is_energy=False
     ):
         if person_amount <= 0:
             raise ValueError("The number of persons must be greater than 0.")
@@ -61,6 +58,7 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
             drone_speed=drone_speed,
             probability_of_detection=probability_of_detection,
             grid_cell_size=grid_cell_size,
+            is_energy=is_energy,
         )
 
         self.pre_render_steps = round(
@@ -69,6 +67,9 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
         )
         print(f"Pre render time: {pre_render_time} minutes")
         print(f"Pre render steps: {self.pre_render_steps}")
+
+        # Determine if Energy-Aware
+        self.is_energy = is_energy
 
         # Prob matrix
         self.probability_matrix = None
@@ -80,10 +81,6 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
         # Person initialization
         self.person_initial_position = person_initial_position
         self.persons_set = self.create_persons_set()
-
-        # Initializing render
-        self.rewards_sum = {a: 0 for a in self.possible_agents}
-        self.rewards_sum["total"] = 0
 
         # Define the action and observation spaces for compatibility with RL libraries
         self.action_spaces = {
@@ -143,7 +140,8 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
         self.pygame_renderer.render_map()
         self.pygame_renderer.render_entities(self.persons_set)
         self.pygame_renderer.render_entities(self.agents_positions)
-        self.pygame_renderer.render_entities([('recharge_base', self.recharge_base.position)])
+        if self.is_energy == True:
+            self.pygame_renderer.render_entities([('recharge_base', self.recharge_base.position)])
         self.pygame_renderer.refresh_screen()
 
     def reset(
@@ -183,8 +181,6 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
         )
 
         observations, infos = super().reset(seed=seed, options=options)
-        self.rewards_sum = {a: 0 for a in self.agents}
-        self.rewards_sum["total"] = 0
         return observations, infos
 
     def raise_if_unvalid_mult(self, individual_multiplication: list[int]) -> bool:
@@ -249,18 +245,20 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
                 terminations[agent] = True
                 continue
 
-            # Check if the drone has no battery
-            battery = self.drone.get_battery(idx)
-            if battery <= 0:
-                truncations[agent] = True
-                terminations[agent] = True
-                continue
+            if self.is_energy == True:
+                # Check if the drone has no battery
+                battery = self.drone.get_battery(idx)
+                if battery <= 0:
+                    truncations[agent] = True
+                    terminations[agent] = True
+                    continue
 
             drone_x, drone_y = self.agents_positions[idx]
-            recharge_base_position = self.recharge_base.get_position()
 
-            if (drone_x, drone_y) == recharge_base_position:
-                self.drone.recharge(idx)
+            if self.is_energy == True:
+                recharge_base_position = self.recharge_base.get_position()
+                if (drone_x, drone_y) == recharge_base_position:
+                    self.drone.recharge(idx)
 
             is_searching = drone_action == Actions.SEARCH.value
 
@@ -272,10 +270,10 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
                     self.agents_positions[idx] = new_position
                     rewards[agent] = self.reward_scheme.default
 
-                # Consume energy after every move
-                self.drone.consume_energy(idx)
+                if self.is_energy == True:
+                    # Consume energy after every move
+                    self.drone.consume_energy(idx)
 
-                self.rewards_sum[agent] += rewards[agent]
                 continue
 
             drone_found_person = False
@@ -307,8 +305,6 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
                         terminations[agent] = True
                         truncations[agent] = True
 
-            self.rewards_sum[agent] += rewards[agent]
-
         self.timestep += 1
 
         # Get dummy infos
@@ -318,10 +314,7 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
 
         # Get observations
         observations = self.create_observations()
-        # If terminated, reset the agents (pettingzoo parallel env requirement)
-        if any(terminations.values()) or any(truncations.values()):
-            self.agents = []
-            print(f'Terminated: {self.agents}')
+        observations = None
 
         return observations, rewards, terminations, truncations, infos
 

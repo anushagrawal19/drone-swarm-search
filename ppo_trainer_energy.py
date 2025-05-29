@@ -4,7 +4,6 @@ import torch.optim as optim
 import numpy as np
 from torch.distributions import Categorical
 import matplotlib.pyplot as plt
-from collections import deque
 import json
 import os
 from datetime import datetime
@@ -327,6 +326,7 @@ class PPOTrainer:
         no_improvement_count = 0
 
         for episode in range(n_episodes):
+            print(f'\nEpisode: {episode}')
             # Update exploration
             progress = episode / n_episodes
             self.update_exploration(progress)
@@ -380,6 +380,8 @@ class PPOTrainer:
                 for idx in range(len(self.memory.rewards) - len(self.env.agents), len(self.memory.rewards)):
                     if self.memory.dones[idx]:
                         self.memory.rewards[idx] -= 1.0
+
+            print(f'Terminated')
 
             # Calculate returns and advantages
             returns = self.compute_returns(self.memory.rewards)
@@ -523,11 +525,11 @@ hyperparameters = {
 
 if __name__ == "__main__":
     # This section only runs if ppo_trainer.py is run directly
-    from basic_env2 import EnergyAwareDroneSwarmSearch
+    from ppo_env_energy import EnergyAwareDroneSwarmSearch
 
     # Create environment
     env = EnergyAwareDroneSwarmSearch(
-        grid_size=40,
+        grid_size=30,
         render_mode="human",
         render_grid=True,
         render_gradient=True,
@@ -538,8 +540,9 @@ if __name__ == "__main__":
         person_initial_position=(15, 15),
         drone_amount=4,
         drone_speed=10,
-        probability_of_detection=0.9,
+        probability_of_detection=1,
         pre_render_time=0,
+        is_energy=True
     )
 
     # Create trainer and start training
