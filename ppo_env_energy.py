@@ -1,11 +1,6 @@
 from DSSE import DroneSwarmSearch
 import numpy as np
 from DSSE.environment.constants import Actions
-import torch
-import torch.nn as nn
-from torch.distributions import Categorical
-import gymnasium as gym
-from gymnasium.spaces import Box, Dict, Discrete, MultiDiscrete, Tuple
 import random
 
 class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
