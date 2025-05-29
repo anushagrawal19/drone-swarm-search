@@ -4,7 +4,6 @@ import torch.optim as optim
 import numpy as np
 from torch.distributions import Categorical
 import matplotlib.pyplot as plt
-from collections import deque
 import json
 import os
 from datetime import datetime
@@ -66,7 +65,7 @@ class ActorCriticNetwork(nn.Module):
 
         # Process position and battery info
         self.state_net = nn.Sequential(
-            nn.Linear(4, 64),  # position(2) + battery(1) + distance_to_base(1)
+            nn.Linear(2, 64),  # position(2)
             nn.ReLU(),
             nn.Linear(64, 64),
             nn.ReLU()
@@ -97,25 +96,20 @@ class ActorCriticNetwork(nn.Module):
 
     def forward(self, state):
         # Process probability matrix through CNN
-        prob_matrix = state['probability_matrix'].unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions
-        cnn_features = self.cnn(prob_matrix)
+        prob_matrix = state['probability_matrix'].unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions [1, 1, H, W]
+        cnn_features = self.cnn(prob_matrix)  # [1, cnn_out_size]
 
-        # Process other features
+        # Process position features
         position = state['position'].unsqueeze(0)  # [1, 2]
-        battery = state['battery_level'].unsqueeze(0)  # [1, 1]
-        distance = torch.norm(state['distance_to_base']).unsqueeze(0).unsqueeze(0)  # [1, 1]
+        state_features = self.state_net(position)  # [1, 64]
 
-        # Combine position and battery features
-        state_features = torch.cat([position, battery, distance], dim=1)  # [1, 4]
-        state_features = self.state_net(state_features)
-
-        # Combine all features
-        combined_features = torch.cat([cnn_features, state_features], dim=1)
-        shared_features = self.shared_net(combined_features)
+        # Combine CNN and state features
+        combined_features = torch.cat([cnn_features, state_features], dim=1)  # [1, cnn_out_size + 64]
+        shared_features = self.shared_net(combined_features)  # [1, 128]
 
         # Get action probabilities and state value
-        action_probs = self.actor(shared_features)
-        state_value = self.critic(shared_features)
+        action_probs = self.actor(shared_features)  # [1, n_actions]
+        state_value = self.critic(shared_features)   # [1, 1]
 
         return action_probs.squeeze(0), state_value.squeeze(0)
 
@@ -168,8 +162,6 @@ class PPOTrainer:
         # Metrics tracking
         self.episode_rewards = []
         self.episode_lengths = []
-        self.energy_consumed = []
-        self.recharge_counts = []
         self.targets_found = []
 
         # Save hyperparameters
@@ -198,16 +190,12 @@ class PPOTrainer:
                 self.episode_rewards.append(value)
             elif key == "episode_length":
                 self.episode_lengths.append(value)
-            elif key == "energy_consumed":
-                self.energy_consumed.append(value)
-            elif key == "recharge_count":
-                self.recharge_counts.append(value)
             elif key == "targets_found":
                 self.targets_found.append(value)
 
     def plot_metrics(self):
         """Plot and save training metrics"""
-        plt.figure(figsize=(15, 10))
+        plt.figure(figsize=(12, 8))
 
         # Plot episode rewards
         plt.subplot(2, 2, 1)
@@ -223,17 +211,8 @@ class PPOTrainer:
         plt.xlabel('Episode')
         plt.ylabel('Steps')
 
-        # Plot energy metrics
-        plt.subplot(2, 2, 3)
-        plt.plot(self.energy_consumed, label='Energy Consumed')
-        plt.plot(self.recharge_counts, label='Recharge Count')
-        plt.title('Energy Metrics')
-        plt.xlabel('Episode')
-        plt.ylabel('Count')
-        plt.legend()
-
         # Plot targets found
-        plt.subplot(2, 2, 4)
+        plt.subplot(2, 2, 3)
         plt.plot(self.targets_found)
         plt.title('Targets Found')
         plt.xlabel('Episode')
@@ -248,12 +227,10 @@ class PPOTrainer:
                   np.column_stack([
                       self.episode_rewards,
                       self.episode_lengths,
-                      self.energy_consumed,
-                      self.recharge_counts,
                       self.targets_found
                   ]),
                   delimiter=',',
-                  header='rewards,lengths,energy,recharges,targets',
+                  header='rewards,lengths,targets',
                   comments='')
 
     def preprocess_state(self, state):
@@ -261,8 +238,6 @@ class PPOTrainer:
         return {
             'position': torch.FloatTensor(state['position']).to(self.device),
             'probability_matrix': torch.FloatTensor(state['probability_matrix']).to(self.device),
-            'battery_level': torch.FloatTensor(state['battery_level']).to(self.device),
-            'distance_to_base': torch.FloatTensor(state['distance_to_base']).to(self.device)
         }
 
     def choose_action(self, state):
@@ -301,8 +276,6 @@ class PPOTrainer:
             'optimizer_state_dict': self.optimizer.state_dict(),
             'episode_rewards': self.episode_rewards,
             'episode_lengths': self.episode_lengths,
-            'energy_consumed': self.energy_consumed,
-            'recharge_counts': self.recharge_counts,
             'targets_found': self.targets_found,
         }, path)
         print(f"Model saved to {path}")
@@ -314,8 +287,6 @@ class PPOTrainer:
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.episode_rewards = checkpoint.get('episode_rewards', [])
         self.episode_lengths = checkpoint.get('episode_lengths', [])
-        self.energy_consumed = checkpoint.get('energy_consumed', [])
-        self.recharge_counts = checkpoint.get('recharge_counts', [])
         self.targets_found = checkpoint.get('targets_found', [])
         print(f"Model loaded from {path}")
 
@@ -327,6 +298,7 @@ class PPOTrainer:
         no_improvement_count = 0
 
         for episode in range(n_episodes):
+            print(f'\nEpisode: {episode}')
             # Update exploration
             progress = episode / n_episodes
             self.update_exploration(progress)
@@ -335,12 +307,12 @@ class PPOTrainer:
             episode_steps = 0
 
             # Reset environment and memory
-            state, _ = self.env.reset()  # Drones will start with full battery
+            state, _ = self.env.reset()
             self.memory.clear()
             done = False
 
             # Collect trajectory
-            while not done and episode_steps < self.env.timestep_limit:
+            while not done and episode_steps <= self.env.timestep_limit:
                 # Get action for each drone
                 current_actions = {}
 
@@ -374,12 +346,7 @@ class PPOTrainer:
                 done = any(termination.values()) or any(truncation.values())
                 episode_steps += 1
 
-            # Handle early termination
-            if done and episode_steps < self.env.timestep_limit:
-                # Add small penalty for early termination due to battery depletion
-                for idx in range(len(self.memory.rewards) - len(self.env.agents), len(self.memory.rewards)):
-                    if self.memory.dones[idx]:
-                        self.memory.rewards[idx] -= 1.0
+            print(f'Terminated')
 
             # Calculate returns and advantages
             returns = self.compute_returns(self.memory.rewards)
@@ -523,10 +490,10 @@ hyperparameters = {
 
 if __name__ == "__main__":
     # This section only runs if ppo_trainer.py is run directly
-    from basic_env2 import EnergyAwareDroneSwarmSearch
+    from ppo_env_base import BaseDroneSwarmSearch
 
     # Create environment
-    env = EnergyAwareDroneSwarmSearch(
+    env = BaseDroneSwarmSearch(
         grid_size=30,
         render_mode="human",
         render_grid=True,
@@ -540,7 +507,7 @@ if __name__ == "__main__":
         drone_speed=10,
         probability_of_detection=1,
         pre_render_time=0,
-        is_energy=True
+        is_energy=False,
     )
 
     # Create trainer and start training

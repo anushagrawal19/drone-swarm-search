@@ -26,10 +26,6 @@ Reward = namedtuple(
         "default",
         "leave_grid",
         "exceed_timestep",
-        "drones_failure",
-        "search_cell",
         "search_and_find",
-        "low_battery_move_towards_base",
-        "energy_penalty",
     ],
 )

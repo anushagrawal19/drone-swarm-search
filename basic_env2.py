@@ -26,6 +26,7 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         drone_speed=10,
         probability_of_detection=0.9,
         pre_render_time=0,
+        is_energy=True,
         energy_penalty_factor=1,  # Reduced from 0.1 to be less punishing
         distance_reward_factor=0.1,  # Increased from 0.05 to encourage exploration
         recharge_reward=10.0,  # Increased significantly to make recharging more attractive
@@ -47,6 +48,7 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
             drone_speed=drone_speed,
             probability_of_detection=probability_of_detection,
             pre_render_time=pre_render_time,
+            is_energy=is_energy,
         )
 
         self.energy_penalty_factor = energy_penalty_factor
