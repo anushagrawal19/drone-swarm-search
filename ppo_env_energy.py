@@ -240,8 +240,8 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         options['drones_positions'] = positions
 
         # Set person movement vector
-        vector_x = round(random.uniform(-1, 1), 1)
-        vector_y = round(random.uniform(-1, 1), 1)
+        vector_x = round(random.uniform(-0.5, 0.5), 1)
+        vector_y = round(random.uniform(-0.5, 0.5), 1)
         options['vector'] = (vector_x, vector_y)
 
         observations, info = super().reset(seed=seed, options=options)
