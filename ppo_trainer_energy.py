@@ -52,8 +52,6 @@ class ActorCriticNetwork(nn.Module):
             nn.ReLU(),
             nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
             nn.AdaptiveAvgPool2d((4, 4)),  # Adaptive pooling to fixed size
             nn.Flatten()
         )
@@ -65,33 +63,33 @@ class ActorCriticNetwork(nn.Module):
 
         # Process position and battery info
         self.state_net = nn.Sequential(
-            nn.Linear(4, 64),  # position(2) + battery(1) + distance_to_base(1)
+            nn.Linear(4, 32),  # position(2) + battery(1) + distance_to_base(1)
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(32, 32),
             nn.ReLU()
         )
 
         # Combine CNN and state features
         self.shared_net = nn.Sequential(
-            nn.Linear(cnn_out_size + 64, 256),
+            nn.Linear(cnn_out_size + 32, 128),
             nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(128, 64),
             nn.ReLU()
         )
 
         # Actor (policy) head with separate advantages for each action
         self.actor = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(64, n_actions),
+            nn.Linear(32, n_actions),
             nn.Softmax(dim=-1)
         )
 
         # Critic (value) head
         self.critic = nn.Sequential(
-            nn.Linear(128, 64),
+            nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(32, 1)
         )
 
     def forward(self, state):
@@ -529,7 +527,7 @@ if __name__ == "__main__":
 
     # Create environment
     env = EnergyAwareDroneSwarmSearch(
-        grid_size=30,
+        grid_size=20,
         render_mode="human",
         render_grid=True,
         render_gradient=True,
@@ -537,7 +535,7 @@ if __name__ == "__main__":
         timestep_limit=300,
         person_amount=1,
         dispersion_inc=0.05,
-        person_initial_position=(15, 15),
+        person_initial_position=(10, 10),
         drone_amount=4,
         drone_speed=10,
         probability_of_detection=1,
