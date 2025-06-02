@@ -260,7 +260,21 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
                 if (drone_x, drone_y) == recharge_base_position:
                     self.drone.recharge(idx)
 
-            is_searching = True
+            is_searching = drone_action == Actions.SEARCH.value
+
+            if drone_action != Actions.SEARCH.value:
+                new_position = self.move_drone((drone_x, drone_y), drone_action)
+                if not self.is_valid_position(new_position):
+                    rewards[agent] = self.reward_scheme.leave_grid
+                else:
+                    self.agents_positions[idx] = new_position
+                    rewards[agent] = self.reward_scheme.default
+
+                if self.is_energy == True:
+                    # Consume energy after every move
+                    self.drone.consume_energy(idx)
+
+                continue
 
             # Perform search logic
             drone_found_person = False
@@ -292,21 +306,6 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
                     for agent in self.agents:
                         terminations[agent] = True
                         truncations[agent] = True
-
-                break
-
-            # Move the drone (if it hasn't already been terminated due to search)
-            if not person_found:
-                new_position = self.move_drone((drone_x, drone_y), drone_action)
-                if not self.is_valid_position(new_position):
-                    rewards[agent] = self.reward_scheme.leave_grid
-                else:
-                    self.agents_positions[idx] = new_position
-                    rewards[agent] = self.reward_scheme.default
-
-                if self.is_energy == True:
-                    # Consume energy after every move
-                    self.drone.consume_energy(idx)
 
         self.timestep += 1
 

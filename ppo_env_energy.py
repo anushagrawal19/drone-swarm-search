@@ -122,15 +122,20 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
 
         # Movement and exploration rewards (only if battery isn't critical)
         if battery_level > self.low_battery_threshold:
-            # Reward for moving towards higher probability areas
-            if prob_improvement > 0:
-                reward += prob_improvement * self.distance_reward_factor * 100.0
-            elif prob_improvement >= 0:
-                reward += 0.1 * self.distance_reward_factor  # Small reward for minimal improvement
+            if action != Actions.SEARCH.value:
+                # Reward for moving towards higher probability areas
+                if prob_improvement > 0:
+                    reward += prob_improvement * self.distance_reward_factor * 100.0
+                elif prob_improvement >= 0:
+                    reward += 0.1 * self.distance_reward_factor  # Small reward for minimal improvement
 
-            # Small reward for being in high probability areas
-            if new_prob > 0.002:
-                reward += 5
+                # Small reward for being in high probability areas
+                if new_prob > 0.002:
+                    reward += 5
+            else:
+                # Extra reward for searching in high probability areas
+                if new_prob > 0.002:
+                    reward += 10
 
         # Base energy penalty: Penalize based on battery level
         energy_penalty = -self.energy_penalty_factor * (1.0 - battery_level / 100.0)
