@@ -91,7 +91,6 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         # If base reward >= 1, target is found
         if reward >= 1:
             self.episode_metrics['successful_searches'] += 1
-            reward *= 1.5  # Scaling the reward when the target is found
 
         # Battery management and probability matrix
         battery_level = self.drone.get_battery(agent)
@@ -113,6 +112,7 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
             # Low battery situation: Reward for reaching base when low
             if new_pos == base_pos:
                 reward += self.recharge_reward
+                self.episode_metrics['recharge_count'] += 1
             else:
                 # Moderate penalty for being farther from the base
                 reward -= self.base_return_factor * new_distance_to_base
@@ -166,8 +166,6 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
 
                 # Update metrics
                 self.episode_metrics['energy_consumed'] += 1
-                if new_pos == self.recharge_base.get_position():
-                    self.episode_metrics['recharge_count'] += 1
 
         # Update normalized observations
         normalized_obs = {

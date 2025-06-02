@@ -229,7 +229,7 @@ class PPOTrainer:
         plt.ylabel('Count')
         plt.legend()
 
-        # Plot targets found
+        # Plot successful searches
         plt.subplot(2, 2, 4)
         plt.plot(self.successful_searches)
         plt.title('Successful Searches')
@@ -239,6 +239,8 @@ class PPOTrainer:
         plt.tight_layout()
         plt.savefig(os.path.join(self.run_dir, 'training_metrics.png'))
         plt.close()
+
+        self.plot_metrics_moving_avg()
 
         # Save metrics to CSV
         np.savetxt(os.path.join(self.run_dir, 'metrics.csv'),
@@ -252,6 +254,56 @@ class PPOTrainer:
                   delimiter=',',
                   header='rewards,lengths,energy,recharges,targets',
                   comments='')
+
+    def plot_metrics_moving_avg(self):
+        """Plot and save training metrics moving avg"""
+        plt.figure(figsize=(15, 10))
+
+        # Plot episode rewards
+        plt.subplot(2, 2, 1)
+        ma_rewards = np.convolve(self.episode_rewards, np.ones(10) / 10, mode='valid')  # Smoothing with window size of 10
+        plt.plot(ma_rewards, label="Moving Average", color='blue')
+        plt.title('Episode Rewards (Moving Average)')
+        plt.xlabel('Episode')
+        plt.ylabel('Reward')
+        plt.grid(True)
+        plt.legend()
+
+        # Plot episode lengths
+        plt.subplot(2, 2, 2)
+        ma_lengths = np.convolve(self.episode_lengths, np.ones(10) / 10, mode='valid')
+        plt.plot(ma_lengths, label="Moving Average", color='green')
+        plt.title('Episode Lengths (Moving Average)')
+        plt.xlabel('Episode')
+        plt.ylabel('Steps')
+        plt.grid(True)
+        plt.legend()
+
+        # Plot energy metrics
+        plt.subplot(2, 2, 3)
+        ma_energy = np.convolve(self.energy_consumed, np.ones(10) / 10, mode='valid')
+        ma_recharge = np.convolve(self.recharge_counts, np.ones(10) / 10, mode='valid')
+        plt.plot(ma_energy, label='Moving Average Energy Consumed', color='orange')
+        plt.plot(ma_recharge, label='Moving Average Recharge Count', color='red')
+        plt.title('Energy Metrics (Moving Average)')
+        plt.xlabel('Episode')
+        plt.ylabel('Count')
+        plt.grid(True)
+        plt.legend()
+
+        # Plot successful searches
+        plt.subplot(2, 2, 4)
+        ma_success = np.convolve(self.successful_searches, np.ones(10) / 10, mode='valid')
+        plt.plot(ma_success, label="Moving Average", color='purple')
+        plt.title('Successful Searches (Moving Average)')
+        plt.xlabel('Episode')
+        plt.ylabel('Count')
+        plt.grid(True)
+        plt.legend()
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.run_dir, 'training_metrics_moving_avg.png'))
+        plt.close()
 
     def preprocess_state(self, state):
         """Convert numpy arrays to PyTorch tensors and move to device"""
@@ -430,9 +482,45 @@ class PPOTrainer:
         # Final metrics plot
         self.plot_metrics()
         print(f"\nTraining completed! Results saved to {self.run_dir}")
-        print(f"Average reward over last 100 episodes: {np.mean(self.episode_rewards[-100:]):.2f}")
-        print(f"Success rate: {np.mean(self.successful_searches) * 100:.2f}%")
-        print(f"Best reward achieved: {best_reward:.2f}")
+
+        # Calculate overall statistics
+        avg_reward_all_episodes = np.mean(self.episode_rewards)
+        min_reward = np.min(self.episode_rewards)
+        max_reward = np.max(self.episode_rewards)
+        avg_success_rate = np.mean(self.successful_searches) * 100
+        avg_episode_length = np.mean(self.episode_lengths)
+        avg_energy_consumed = np.mean(self.energy_consumed)
+        avg_recharge_count = np.mean(self.recharge_counts)
+
+        # Log the results
+        print(f"Average reward over all episodes: {avg_reward_all_episodes:.2f}")
+        print(f"Success rate: {avg_success_rate:.2f}%")
+        print(f"Lowest reward: {min_reward:.2f}")
+        print(f"Highest reward: {max_reward:.2f}")
+        print(f"Average episode length: {avg_episode_length:.2f} steps")
+        print(f"Average energy consumed: {avg_energy_consumed:.2f}")
+        print(f"Average recharge count: {avg_recharge_count:.2f}")
+
+        # Prepare results dictionary
+        final_metrics = {
+            "training_completed": True,
+            "env": "Energy",
+            "run_directory": self.run_dir,
+            "average_reward_all_episodes": avg_reward_all_episodes,
+            "success_rate": avg_success_rate,
+            "lowest_reward": min_reward,
+            "highest_reward": max_reward,
+            "average_episode_length": avg_episode_length,
+            "average_energy_consumed": avg_energy_consumed,
+            "average_recharge_count": avg_recharge_count,
+        }
+
+        # Save the results to a JSON file in the logs directory
+        metrics_filename = os.path.join(self.run_dir, 'final_metrics.json')
+        with open(metrics_filename, 'w') as f:
+            json.dump(final_metrics, f, indent=4)
+
+        print(f"\nFinal metrics saved to {metrics_filename}")
 
     def compute_returns(self, rewards):
         """Compute discounted returns"""
