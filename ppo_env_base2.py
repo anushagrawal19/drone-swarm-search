@@ -2,9 +2,10 @@ from DSSE import DroneSwarmSearch
 import numpy as np
 import random
 from gymnasium import spaces
+from DSSE.environment.constants import Actions
 
 class BaseDroneSwarmSearch2(DroneSwarmSearch):
-    """Base version of DroneSwarmSearch with probability matrix rewards - Fixed for PPO convergence"""
+    """Base version of DroneSwarmSearch with PPO-compatible policy - No energy/battery management"""
 
     def __init__(
         self,
@@ -22,11 +23,11 @@ class BaseDroneSwarmSearch2(DroneSwarmSearch):
         probability_of_detection=0.9,
         pre_render_time=0,
         is_energy=False,
-        prob_reward_factor=100.0,  # Increased for better signal
-        min_prob_threshold=0.001,
-        exploration_bonus=0.1,  # Small bonus for exploration
-        search_bonus=2.0,  # Bonus for searching in high-prob areas
-        movement_penalty=0.01,  # Small penalty to encourage efficiency
+        # Normalized reward parameters for better convergence
+        distance_reward_factor=1.0,
+        exploration_bonus=0.2,
+        search_bonus_factor=20.0,
+        movement_penalty=0.01,
     ):
         super().__init__(
             grid_size=grid_size,
@@ -45,19 +46,15 @@ class BaseDroneSwarmSearch2(DroneSwarmSearch):
             is_energy=is_energy
         )
 
-        # Reward parameters
-        self.prob_reward_factor = prob_reward_factor
-        self.min_prob_threshold = min_prob_threshold
+        # Normalized parameters for better convergence
+        self.distance_reward_factor = distance_reward_factor
         self.exploration_bonus = exploration_bonus
-        self.search_bonus = search_bonus
+        self.search_bonus_factor = search_bonus_factor
         self.movement_penalty = movement_penalty
 
-        # Setup observation space for PPO
-        self._setup_observation_space()
+        # Tracking for reward normalization
+        self.max_reward_magnitude = 10.0  # Clip rewards to this range
 
-        # Track visited positions for exploration bonus
-        self.visited_positions = set()
-        
         # Episode metrics
         self.episode_metrics = {
             'successful_searches': 0,
@@ -65,231 +62,172 @@ class BaseDroneSwarmSearch2(DroneSwarmSearch):
             'steps_taken': 0,
         }
 
-    def _setup_observation_space(self):
-        """Setup observation space for PPO training"""
-        # Observation components:
-        # - Position (2): normalized x, y
-        # - Local probability grid (9): 3x3 grid around drone
-        # - Global statistics (4): max prob, mean prob, distance to max prob, current prob
-        # - Step information (2): timestep ratio, drone index
-        
-        obs_dim = 2 + 9 + 4 + 2  # Total: 17 dimensions
-        
-        self.observation_space = spaces.Box(
-            low=0.0,
-            high=1.0,
-            shape=(obs_dim,),
-            dtype=np.float32
-        )
+        # Visited cells tracking for exploration bonus
+        self.visited_cells = set()
 
-    def _get_local_probability_grid(self, position, prob_matrix):
-        """Get 3x3 probability grid around the drone position"""
-        x, y = position
-        local_grid = np.zeros(9, dtype=np.float32)
-        
-        idx = 0
-        for dy in [-1, 0, 1]:
-            for dx in [-1, 0, 1]:
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < self.grid_size and 0 <= ny < self.grid_size:
-                    local_grid[idx] = prob_matrix[ny, nx]
-                idx += 1
-                
-        # Normalize local grid
-        if local_grid.max() > 0:
-            local_grid = local_grid / local_grid.max()
-            
-        return local_grid
-
-    def get_normalized_observation(self, agent_idx):
-        """Convert raw observations to normalized form suitable for PPO"""
-        if agent_idx >= len(self.agents_positions):
-            return np.zeros(self.observation_space.shape[0], dtype=np.float32)
-            
+    def get_flattened_observation(self, agent_idx):
+        """Return flattened observation vector for PPO compatibility (same structure as EnergyAware but without battery)"""
         position = self.agents_positions[agent_idx]
         prob_matrix = self.probability_matrix.get_matrix()
         
-        # Normalize position to [0, 1]
+        # Normalized position
         normalized_pos = np.array([
-            position[0] / (self.grid_size - 1),
-            position[1] / (self.grid_size - 1)
-        ], dtype=np.float32)
+            position[0] / self.grid_size,
+            position[1] / self.grid_size
+        ])
         
-        # Get local probability grid (3x3 around drone)
-        local_prob = self._get_local_probability_grid(position, prob_matrix)
+        # Local probability information (5x5 window around drone)
+        local_prob = self._get_local_probability(position, prob_matrix)
         
-        # Global probability statistics
+        # Global probability statistics (replacing battery/base distance info)
         max_prob = np.max(prob_matrix)
         mean_prob = np.mean(prob_matrix)
         current_prob = prob_matrix[position[1], position[0]]
         
-        # Find position of maximum probability
-        max_pos = np.unravel_index(np.argmax(prob_matrix), prob_matrix.shape)
-        distance_to_max = np.sqrt((position[0] - max_pos[1])**2 + (position[1] - max_pos[0])**2)
-        normalized_distance_to_max = distance_to_max / (self.grid_size * np.sqrt(2))
-        
-        global_stats = np.array([
-            max_prob,
-            mean_prob,
-            normalized_distance_to_max,
-            current_prob
-        ], dtype=np.float32)
-        
-        # Step information
-        timestep_ratio = self.timestep / self.timestep_limit if hasattr(self, 'timestep') else 0.0
-        drone_index = agent_idx / (self.drone.amount - 1) if self.drone.amount > 1 else 0.0
-        
-        step_info = np.array([
-            timestep_ratio,
-            drone_index
-        ], dtype=np.float32)
-        
-        # Combine all observation components
+        # Flatten everything into a single vector
+        # Structure: position(2) + prob_stats(3) + local_prob(25) = 30 total
         observation = np.concatenate([
-            normalized_pos,      # 2 elements
-            local_prob,          # 9 elements
-            global_stats,        # 4 elements
-            step_info           # 2 elements
+            normalized_pos,              # 2 values
+            np.array([max_prob, mean_prob, current_prob]),  # 3 values (replacing battery info)
+            local_prob.flatten(),        # 25 values (5x5 local area)
         ])
         
         return observation.astype(np.float32)
 
-    def calculate_reward(self, agent_idx, action, old_pos, new_pos):
-        """Calculate comprehensive reward based on multiple factors"""
-        prob_matrix = self.probability_matrix.get_matrix()
+    def _get_local_probability(self, position, prob_matrix, window_size=5):
+        """Get local probability matrix around drone position"""
+        x, y = position
+        half_window = window_size // 2
+        
+        # Initialize local matrix
+        local_matrix = np.zeros((window_size, window_size))
+        
+        for i in range(window_size):
+            for j in range(window_size):
+                world_x = x - half_window + i
+                world_y = y - half_window + j
+                
+                # Check bounds
+                if 0 <= world_x < self.grid_size and 0 <= world_y < self.grid_size:
+                    local_matrix[j, i] = prob_matrix[world_y, world_x]
+        
+        return local_matrix
+
+    def calculate_search_focused_reward(self, agent_idx, base_reward, action, old_pos, new_pos):
+        """Calculate normalized search-focused reward for better PPO convergence (no energy considerations)"""
         reward = 0.0
         
-        # Get probability values
+        # Success reward (target found) - highest priority
+        if base_reward >= 1:
+            reward += 10.0  # Large positive reward for success
+            self.episode_metrics['successful_searches'] += 1
+            return np.clip(reward, -self.max_reward_magnitude, self.max_reward_magnitude)
+        
+        # Get probability information
+        prob_matrix = self.probability_matrix.get_matrix()
         old_prob = prob_matrix[old_pos[1], old_pos[0]]
-        new_prob = prob_matrix[new_pos[1], new_pos[0]]
+        current_prob = prob_matrix[new_pos[1], new_pos[0]]
         
-        # Probability improvement reward
-        prob_improvement = new_prob - old_prob
-        if prob_improvement > 0:
-            reward += prob_improvement * self.prob_reward_factor
-        
-        # Reward for being in high probability areas
-        if new_prob > self.min_prob_threshold:
-            reward += new_prob * self.prob_reward_factor * 0.1
+        # Reward for searching in high probability areas
+        if action == Actions.SEARCH.value:
+            # Searching reward based on probability
+            reward += current_prob * self.search_bonus_factor
+        else:
+            # Movement rewards
+            prob_improvement = current_prob - old_prob
             
-            # Extra bonus for searching in high probability areas
-            if hasattr(self, 'drone') and hasattr(self.drone, 'Actions'):
-                if action == self.drone.Actions.SEARCH.value:
-                    reward += self.search_bonus * new_prob * 100
-        
-        # Exploration bonus for visiting new positions
-        pos_key = (new_pos[0], new_pos[1])
-        if pos_key not in self.visited_positions:
-            reward += self.exploration_bonus
-            self.visited_positions.add(pos_key)
+            # Reward for moving to higher probability areas
+            if prob_improvement > 0:
+                reward += prob_improvement * self.distance_reward_factor * 10
+            
+            # Small exploration bonus for visiting new cells
+            cell_key = (new_pos[0], new_pos[1])
+            if cell_key not in self.visited_cells:
+                reward += self.exploration_bonus
+                self.visited_cells.add(cell_key)
         
         # Small movement penalty to encourage efficiency
         if old_pos != new_pos:
             reward -= self.movement_penalty
         
-        # Penalty for staying in very low probability areas too long
-        if new_prob < self.min_prob_threshold * 0.1:
+        # Step penalty to encourage faster completion
+        reward -= 0.01
+        
+        # Penalty for staying in very low probability areas
+        if current_prob < 0.001:
             reward -= 0.05
-            
+        
         # Boundary penalty (discourage staying at edges)
         if (new_pos[0] <= 1 or new_pos[0] >= self.grid_size - 2 or 
             new_pos[1] <= 1 or new_pos[1] >= self.grid_size - 2):
             reward -= 0.02
-            
+        
+        # Clip reward to prevent extreme values
+        reward = np.clip(reward, -self.max_reward_magnitude, self.max_reward_magnitude)
+        
         return reward
 
     def step(self, actions):
-        """Override step to include improved rewards and proper observation handling"""
-        # Store positions before movement
+        """Override step with improved reward calculation and observation handling"""
         old_positions = self.agents_positions.copy()
         
-        # Perform the base step
+        # Store person positions before movement
+        old_person_positions = [(person.x, person.y) for person in self.persons_set]
+        
+        # Call parent step
         observations, rewards, terminations, truncations, infos = super().step(actions)
         
-        # Modify rewards with our custom reward function
+        # Ensure person movement is correct
+        for person, old_pos in zip(list(self.persons_set), old_person_positions):
+            new_pos = (person.x, person.y)
+            if new_pos == old_pos:
+                movement_map = self.build_movement_matrix(person)
+                person.step(movement_map)
+        
+        # Calculate search-focused rewards for active agents
+        new_rewards = {}
         for idx, agent in enumerate(self.agents):
-            if agent in rewards:  # Check if agent still active
+            if agent in rewards:  # Only process active agents
                 old_pos = old_positions[idx]
                 new_pos = self.agents_positions[idx]
                 
-                # Keep the original reward (for finding person)
-                base_reward = rewards[agent]
-                
-                # Add our custom reward
-                custom_reward = self.calculate_reward(idx, actions[agent], old_pos, new_pos)
-                
-                # Combine rewards
-                total_reward = base_reward + custom_reward
+                new_reward = self.calculate_search_focused_reward(
+                    idx, rewards[agent], actions[agent], old_pos, new_pos
+                )
+                new_rewards[agent] = new_reward
                 
                 # Update metrics
-                if base_reward >= 1:  # Person found
-                    self.episode_metrics['successful_searches'] += 1
-                    total_reward += 100.0  # Large bonus for finding person
-                
-                rewards[agent] = np.clip(total_reward, -10.0, 110.0)  # Clip rewards
-                self.episode_metrics['total_reward'] += rewards[agent]
+                self.episode_metrics['total_reward'] += new_reward
         
         self.episode_metrics['steps_taken'] += 1
         
-        # Convert to normalized observations
-        normalized_obs = {}
+        # Get flattened observations for PPO
+        flattened_obs = {}
         for idx, agent in enumerate(self.agents):
-            if agent in observations:  # Only create observation if agent is active
-                normalized_obs[agent] = self.get_normalized_observation(idx)
+            if agent in new_rewards:  # Only process active agents
+                flattened_obs[agent] = self.get_flattened_observation(idx)
         
-        return normalized_obs, rewards, terminations, truncations, infos
+        return flattened_obs, new_rewards, terminations, truncations, infos
 
     def reset(self, seed=None, options=None):
-        """Reset environment with proper initialization"""
+        """Reset environment with proper initialization for PPO training"""
         if seed is not None:
             np.random.seed(seed)
             random.seed(seed)
         
-        # Reset visited positions
-        self.visited_positions = set()
+        # Reset visited cells tracking
+        self.visited_cells = set()
         
-        # Set diverse starting positions for drones
-        positions = []
-        if self.drone.amount > 1:
-            # Divide grid into regions for each drone
-            n_regions = int(np.ceil(np.sqrt(self.drone.amount)))
-            region_size = max(self.grid_size // n_regions, 3)
-            
-            regions = []
-            for i in range(n_regions):
-                for j in range(n_regions):
-                    if len(regions) < self.drone.amount:
-                        x1 = max(1, i * region_size)
-                        y1 = max(1, j * region_size)
-                        x2 = min(self.grid_size - 1, (i + 1) * region_size)
-                        y2 = min(self.grid_size - 1, (j + 1) * region_size)
-                        regions.append((x1, y1, x2, y2))
-            
-            # Place each drone randomly within its region
-            for x1, y1, x2, y2 in regions:
-                pos = (
-                    np.random.randint(x1, x2),
-                    np.random.randint(y1, y2)
-                )
-                positions.append(pos)
-        else:
-            # Single drone - random position away from edges
-            pos = (
-                np.random.randint(2, self.grid_size - 2),
-                np.random.randint(2, self.grid_size - 2)
-            )
-            positions.append(pos)
+        # Generate diverse starting positions for drones
+        positions = self._generate_diverse_positions()
         
-        # Set options
+        # Set random person movement vector
+        vector_x = random.uniform(-1.0, 1.0)
+        vector_y = random.uniform(-1.0, 1.0)
+        
         if options is None:
             options = {}
         options['drones_positions'] = positions
-        
-        # Random person movement vector
-        vector_magnitude = np.random.uniform(0.3, 0.8)
-        vector_angle = np.random.uniform(0, 2 * np.pi)
-        vector_x = vector_magnitude * np.cos(vector_angle)
-        vector_y = vector_magnitude * np.sin(vector_angle)
         options['vector'] = (vector_x, vector_y)
         
         # Call parent reset
@@ -302,13 +240,54 @@ class BaseDroneSwarmSearch2(DroneSwarmSearch):
             'steps_taken': 0,
         }
         
-        # Convert to normalized observations
-        normalized_obs = {}
+        # Return flattened observations
+        flattened_obs = {}
         for idx, agent in enumerate(self.agents):
-            if agent in observations:
-                normalized_obs[agent] = self.get_normalized_observation(idx)
+            flattened_obs[agent] = self.get_flattened_observation(idx)
         
-        return normalized_obs, info
+        return flattened_obs, info
+
+    def _generate_diverse_positions(self):
+        """Generate diverse starting positions for drones"""
+        positions = []
+        grid_size = self.grid_size
+        
+        # Create a grid of potential starting positions
+        n_regions = max(2, int(np.sqrt(self.drone.amount)))
+        region_size = grid_size // n_regions
+        
+        regions = []
+        for i in range(n_regions):
+            for j in range(n_regions):
+                if len(regions) < self.drone.amount:
+                    x1 = i * region_size
+                    y1 = j * region_size
+                    x2 = min((i + 1) * region_size - 1, grid_size - 1)
+                    y2 = min((j + 1) * region_size - 1, grid_size - 1)
+                    regions.append((x1, y1, x2, y2))
+        
+        # Place each drone randomly within its region
+        for i in range(self.drone.amount):
+            if i < len(regions):
+                x1, y1, x2, y2 = regions[i]
+                pos = (
+                    np.random.randint(x1, x2 + 1),
+                    np.random.randint(y1, y2 + 1)
+                )
+            else:
+                # Fallback: random position
+                pos = (
+                    np.random.randint(0, grid_size),
+                    np.random.randint(0, grid_size)
+                )
+            positions.append(pos)
+        
+        return positions
+
+    def get_observation_space_size(self):
+        """Return the size of the flattened observation space"""
+        # position(2) + prob_stats(3) + local_prob(5x5=25) = 30
+        return 2 + 3 + 25
 
     def get_episode_metrics(self):
         """Return episode metrics for logging"""
