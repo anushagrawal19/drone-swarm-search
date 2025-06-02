@@ -37,6 +37,7 @@ class ProbabilityMatrix:
         vector: tuple[float, float],
         initial_position: tuple[int, int],
         size: int,
+        max_spacement: float = 5  # New parameter to cap spacement growth
     ):
         """
         Probability matrix that represents the probability of finding a target in a certain position
@@ -55,6 +56,7 @@ class ProbabilityMatrix:
             Initial position of the matrix
         size : int
             Size of the matrix (size x size)
+        max_spacement: Maximum value for spacement to prevent the spread from becoming too large
         """
 
         self.amplitude = amplitude
@@ -70,6 +72,7 @@ class ProbabilityMatrix:
         # These determine the shape of the gaussian function
         self.spacement_inc = spacement_inc
         self.spacement = spacement_start
+        self.max_spacement = max_spacement  # Cap for spacement
 
         # Time step control
         self.time_step_relation = 1
@@ -116,7 +119,9 @@ class ProbabilityMatrix:
             self.map_prob = map_copy / map_copy_sum
 
         self.map = map_copy
-        self.spacement += self.spacement_inc
+
+        # Cap the spacement value to prevent excessive spreading
+        self.spacement = min(self.spacement + self.spacement_inc, self.max_spacement)
 
     def increment_movement(self) -> None:
         self.inc_x += self.movement_vector[0] / self.time_step_relation

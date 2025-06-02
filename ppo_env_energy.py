@@ -23,7 +23,7 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         pre_render_time=0,
         is_energy=True,
         energy_penalty_factor=1,  # Reduced from 0.1 to be less punishing
-        distance_reward_factor=0.1,  # Increased from 0.05 to encourage exploration
+        distance_reward_factor=10,  # Increased from 0.05 to encourage exploration
         recharge_reward=200,  # Increased significantly to make recharging more attractive
         low_battery_threshold=20,  # Increased to encourage earlier recharging
         base_return_factor=2.0,  # New factor for base return rewards
@@ -124,14 +124,16 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
             if action != Actions.SEARCH.value:
                 # Reward for moving towards higher probability areas
                 if prob_improvement > 0:
-                    reward += prob_improvement * self.distance_reward_factor * 2.0
+                    reward += prob_improvement * self.distance_reward_factor * 100.0
+                elif prob_improvement >= 0:
+                    reward += 0.1 * self.distance_reward_factor  # Small reward for minimal improvement
 
                 # Small reward for being in high probability areas
-                if new_prob > 0.5:
+                if new_prob > 0.002:
                     reward += 5
             else:
                 # Extra reward for searching in high probability areas
-                if new_prob > 0.5:
+                if new_prob > 0.002:
                     reward += 10
 
         # Base energy penalty
