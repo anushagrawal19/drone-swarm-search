@@ -43,78 +43,50 @@ class PPOMemory:
         return batches
 
 class ActorCriticNetwork(nn.Module):
-    def __init__(self, grid_size, n_actions):
+    def __init__(self, obs_size, n_actions, hidden_size=128):
         super().__init__()
 
-        # CNN for processing probability matrix
-        self.cnn = nn.Sequential(
-            nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((4, 4)),  # Adaptive pooling to fixed size
-            nn.Flatten()
-        )
-
-        # Calculate CNN output size
-        with torch.no_grad():
-            dummy_input = torch.zeros(1, 1, grid_size, grid_size)
-            cnn_out_size = self.cnn(dummy_input).shape[1]
-
-        # Process position and battery info
-        self.state_net = nn.Sequential(
-            nn.Linear(4, 32),  # position(2) + battery(1) + distance_to_base(1)
-            nn.ReLU(),
-            nn.Linear(32, 32),
-            nn.ReLU()
-        )
-
-        # Combine CNN and state features
+        # Simple but effective architecture for flattened observations
         self.shared_net = nn.Sequential(
-            nn.Linear(cnn_out_size + 32, 128),
+            nn.Linear(obs_size, hidden_size),
             nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 64),
             nn.ReLU()
         )
 
-        # Actor (policy) head with separate advantages for each action
+        # Actor head (policy network)
         self.actor = nn.Sequential(
             nn.Linear(64, 32),
             nn.ReLU(),
-            nn.Linear(32, n_actions),
-            nn.Softmax(dim=-1)
+            nn.Linear(32, n_actions)
         )
 
-        # Critic (value) head
+        # Critic head (value network)
         self.critic = nn.Sequential(
             nn.Linear(64, 32),
             nn.ReLU(),
             nn.Linear(32, 1)
         )
 
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            nn.init.orthogonal_(module.weight, gain=np.sqrt(2))
+            nn.init.constant_(module.bias, 0)
+
     def forward(self, state):
-        # Process probability matrix through CNN
-        prob_matrix = state['probability_matrix'].unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions
-        cnn_features = self.cnn(prob_matrix)
+        # Process flattened state vector
+        shared_features = self.shared_net(state)
 
-        # Process other features
-        position = state['position'].unsqueeze(0)  # [1, 2]
-        battery = state['battery_level'].unsqueeze(0)  # [1, 1]
-        distance = torch.norm(state['distance_to_base']).unsqueeze(0).unsqueeze(0)  # [1, 1]
-
-        # Combine position and battery features
-        state_features = torch.cat([position, battery, distance], dim=1)  # [1, 4]
-        state_features = self.state_net(state_features)
-
-        # Combine all features
-        combined_features = torch.cat([cnn_features, state_features], dim=1)
-        shared_features = self.shared_net(combined_features)
-
-        # Get action probabilities and state value
-        action_probs = self.actor(shared_features)
+        # Get action logits and state value
+        action_logits = self.actor(shared_features)
         state_value = self.critic(shared_features)
 
-        return action_probs.squeeze(0), state_value.squeeze(0)
+        return action_logits, state_value.squeeze(-1)
 
 class PPOTrainer:
     def __init__(
@@ -127,31 +99,35 @@ class PPOTrainer:
         entropy_coef=0.01,
         max_grad_norm=0.5,
         batch_size=64,
-        n_epochs=10,
+        n_epochs=4,  # Reduced for stability
         log_dir='logs',
-        initial_entropy_coef=0.1,  # Initial entropy coefficient for exploration
-        final_entropy_coef=0.01,   # Final entropy coefficient
-        exploration_fraction=0.3,   # Fraction of training where we anneal exploration
+        target_kl=0.01,  # Early stopping for KL divergence
+        normalize_advantages=True,
     ):
         self.env = env
         self.gamma = gamma
         self.epsilon = epsilon
         self.value_coef = value_coef
-        self.initial_entropy_coef = initial_entropy_coef
-        self.final_entropy_coef = final_entropy_coef
-        self.entropy_coef = initial_entropy_coef
-        self.exploration_fraction = exploration_fraction
+        self.entropy_coef = entropy_coef
         self.max_grad_norm = max_grad_norm
         self.batch_size = batch_size
         self.n_epochs = n_epochs
+        self.target_kl = target_kl
+        self.normalize_advantages = normalize_advantages
 
         # Initialize network and optimizer
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.network = ActorCriticNetwork(
-            grid_size=env.grid_size,
-            n_actions=len(env.possible_actions)
-        ).to(self.device)
-        self.optimizer = optim.SGD(self.network.parameters(), lr=learning_rate)
+        print(f"Using device: {self.device}")
+
+        # Get observation space size from environment
+        obs_size = env.get_observation_space_size()
+        n_actions = len(env.possible_actions)
+
+        self.network = ActorCriticNetwork(obs_size, n_actions).to(self.device)
+        self.optimizer = optim.Adam(self.network.parameters(), lr=learning_rate, eps=1e-5)
+
+        # Learning rate scheduler
+        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=200, gamma=0.9)
 
         # Initialize memory buffer
         self.memory = PPOMemory(batch_size)
@@ -168,6 +144,9 @@ class PPOTrainer:
         self.energy_consumed = []
         self.recharge_counts = []
         self.successful_searches = []
+        self.policy_losses = []
+        self.value_losses = []
+        self.entropy_losses = []
 
         # Save hyperparameters
         self.save_hyperparameters({
@@ -178,6 +157,8 @@ class PPOTrainer:
             "entropy_coef": entropy_coef,
             "batch_size": batch_size,
             "n_epochs": n_epochs,
+            "obs_size": obs_size,
+            "n_actions": n_actions,
             "grid_size": env.grid_size,
             "drone_amount": env.drone.amount,
             "timestep_limit": env.timestep_limit
@@ -204,143 +185,110 @@ class PPOTrainer:
 
     def plot_metrics(self):
         """Plot and save training metrics"""
-        plt.figure(figsize=(15, 10))
+        if len(self.episode_rewards) < 2:
+            return
 
-        # Plot episode rewards
-        plt.subplot(2, 2, 1)
-        plt.plot(self.episode_rewards)
-        plt.title('Episode Rewards')
-        plt.xlabel('Episode')
-        plt.ylabel('Reward')
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
 
-        # Plot episode lengths
-        plt.subplot(2, 2, 2)
-        plt.plot(self.episode_lengths)
-        plt.title('Episode Lengths')
-        plt.xlabel('Episode')
-        plt.ylabel('Steps')
+        # Episode rewards
+        axes[0, 0].plot(self.episode_rewards, alpha=0.7)
+        if len(self.episode_rewards) >= 20:
+            ma_rewards = np.convolve(self.episode_rewards, np.ones(20)/20, mode='valid')
+            axes[0, 0].plot(range(19, len(self.episode_rewards)), ma_rewards, 'r-', linewidth=2)
+        axes[0, 0].set_title('Episode Rewards')
+        axes[0, 0].set_xlabel('Episode')
+        axes[0, 0].set_ylabel('Reward')
+        axes[0, 0].grid(True)
 
-        # Plot energy metrics
-        plt.subplot(2, 2, 3)
-        plt.plot(self.energy_consumed, label='Energy Consumed')
-        plt.plot(self.recharge_counts, label='Recharge Count')
-        plt.title('Energy Metrics')
-        plt.xlabel('Episode')
-        plt.ylabel('Count')
-        plt.legend()
+        # Episode lengths
+        axes[0, 1].plot(self.episode_lengths, alpha=0.7)
+        if len(self.episode_lengths) >= 20:
+            ma_lengths = np.convolve(self.episode_lengths, np.ones(20)/20, mode='valid')
+            axes[0, 1].plot(range(19, len(self.episode_lengths)), ma_lengths, 'r-', linewidth=2)
+        axes[0, 1].set_title('Episode Lengths')
+        axes[0, 1].set_xlabel('Episode')
+        axes[0, 1].set_ylabel('Steps')
+        axes[0, 1].grid(True)
 
-        # Plot successful searches
-        plt.subplot(2, 2, 4)
-        plt.plot(self.successful_searches)
-        plt.title('Successful Searches')
-        plt.xlabel('Episode')
-        plt.ylabel('Count')
+        # Successful searches
+        axes[0, 2].plot(self.successful_searches, alpha=0.7)
+        if len(self.successful_searches) >= 20:
+            ma_success = np.convolve(self.successful_searches, np.ones(20)/20, mode='valid')
+            axes[0, 2].plot(range(19, len(self.successful_searches)), ma_success, 'r-', linewidth=2)
+        axes[0, 2].set_title('Successful Searches per Episode')
+        axes[0, 2].set_xlabel('Episode')
+        axes[0, 2].set_ylabel('Count')
+        axes[0, 2].grid(True)
+
+        # Energy metrics
+        axes[1, 0].plot(self.energy_consumed, label='Energy Consumed', alpha=0.7)
+        axes[1, 0].plot(self.recharge_counts, label='Recharge Count', alpha=0.7)
+        axes[1, 0].set_title('Energy Metrics')
+        axes[1, 0].set_xlabel('Episode')
+        axes[1, 0].set_ylabel('Count')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True)
+
+        # Loss metrics
+        if self.policy_losses:
+            axes[1, 1].plot(self.policy_losses, label='Policy Loss', alpha=0.7)
+            axes[1, 1].plot(self.value_losses, label='Value Loss', alpha=0.7)
+            axes[1, 1].set_title('Training Losses')
+            axes[1, 1].set_xlabel('Update')
+            axes[1, 1].set_ylabel('Loss')
+            axes[1, 1].legend()
+            axes[1, 1].grid(True)
+
+        # Success rate over time
+        if len(self.successful_searches) >= 50:
+            success_rate = np.convolve(self.successful_searches, np.ones(50)/50, mode='valid')
+            axes[1, 2].plot(range(49, len(self.successful_searches)), success_rate, 'g-', linewidth=2)
+            axes[1, 2].set_title('Success Rate (50-episode moving average)')
+            axes[1, 2].set_xlabel('Episode')
+            axes[1, 2].set_ylabel('Success Rate')
+            axes[1, 2].grid(True)
 
         plt.tight_layout()
-        plt.savefig(os.path.join(self.run_dir, 'training_metrics.png'))
+        plt.savefig(os.path.join(self.run_dir, 'training_metrics.png'), dpi=150)
         plt.close()
 
-        self.plot_metrics_moving_avg()
-
         # Save metrics to CSV
+        max_len = max(len(self.episode_rewards), len(self.episode_lengths),
+                     len(self.energy_consumed), len(self.recharge_counts),
+                     len(self.successful_searches))
+
+        # Pad shorter lists
+        def pad_list(lst, target_len):
+            return lst + [0] * (target_len - len(lst))
+
+        metrics_array = np.column_stack([
+            pad_list(self.episode_rewards, max_len),
+            pad_list(self.episode_lengths, max_len),
+            pad_list(self.energy_consumed, max_len),
+            pad_list(self.recharge_counts, max_len),
+            pad_list(self.successful_searches, max_len)
+        ])
+
         np.savetxt(os.path.join(self.run_dir, 'metrics.csv'),
-                  np.column_stack([
-                      self.episode_rewards,
-                      self.episode_lengths,
-                      self.energy_consumed,
-                      self.recharge_counts,
-                      self.successful_searches
-                  ]),
+                  metrics_array,
                   delimiter=',',
                   header='rewards,lengths,energy,recharges,targets',
                   comments='')
 
-    def plot_metrics_moving_avg(self):
-        """Plot and save training metrics moving avg"""
-        plt.figure(figsize=(15, 10))
-
-        # Plot episode rewards
-        plt.subplot(2, 2, 1)
-        ma_rewards = np.convolve(self.episode_rewards, np.ones(10) / 10, mode='valid')  # Smoothing with window size of 10
-        plt.plot(ma_rewards, label="Moving Average", color='blue')
-        plt.title('Episode Rewards (Moving Average)')
-        plt.xlabel('Episode')
-        plt.ylabel('Reward')
-        plt.grid(True)
-        plt.legend()
-
-        # Plot episode lengths
-        plt.subplot(2, 2, 2)
-        ma_lengths = np.convolve(self.episode_lengths, np.ones(10) / 10, mode='valid')
-        plt.plot(ma_lengths, label="Moving Average", color='green')
-        plt.title('Episode Lengths (Moving Average)')
-        plt.xlabel('Episode')
-        plt.ylabel('Steps')
-        plt.grid(True)
-        plt.legend()
-
-        # Plot energy metrics
-        plt.subplot(2, 2, 3)
-        ma_energy = np.convolve(self.energy_consumed, np.ones(10) / 10, mode='valid')
-        ma_recharge = np.convolve(self.recharge_counts, np.ones(10) / 10, mode='valid')
-        plt.plot(ma_energy, label='Moving Average Energy Consumed', color='orange')
-        plt.plot(ma_recharge, label='Moving Average Recharge Count', color='red')
-        plt.title('Energy Metrics (Moving Average)')
-        plt.xlabel('Episode')
-        plt.ylabel('Count')
-        plt.grid(True)
-        plt.legend()
-
-        # Plot successful searches
-        plt.subplot(2, 2, 4)
-        ma_success = np.convolve(self.successful_searches, np.ones(10) / 10, mode='valid')
-        plt.plot(ma_success, label="Moving Average", color='purple')
-        plt.title('Successful Searches (Moving Average)')
-        plt.xlabel('Episode')
-        plt.ylabel('Count')
-        plt.grid(True)
-        plt.legend()
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.run_dir, 'training_metrics_moving_avg.png'))
-        plt.close()
-
-    def preprocess_state(self, state):
-        """Convert numpy arrays to PyTorch tensors and move to device"""
-        return {
-            'position': torch.FloatTensor(state['position']).to(self.device),
-            'probability_matrix': torch.FloatTensor(state['probability_matrix']).to(self.device),
-            'battery_level': torch.FloatTensor(state['battery_level']).to(self.device),
-            'distance_to_base': torch.FloatTensor(state['distance_to_base']).to(self.device)
-        }
-
     def choose_action(self, state):
-        """Select action using the current policy with added exploration"""
+        """Select action using the current policy"""
         with torch.no_grad():
-            state = self.preprocess_state(state)
-            action_probs, state_value = self.network(state)
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            logits, value = self.network(state_tensor)
 
-            # Add exploration noise to probabilities
-            action_probs = action_probs + torch.randn_like(action_probs) * self.entropy_coef
-            action_probs = torch.softmax(action_probs, dim=-1)  # Renormalize
+            # Apply softmax to get probabilities
+            probs = torch.softmax(logits, dim=-1)
 
-            # Ensure no probability is too close to 0 or 1
-            action_probs = torch.clamp(action_probs, min=0.01, max=0.99)
-            action_probs = action_probs / action_probs.sum()  # Renormalize again
-
-            dist = Categorical(action_probs)
+            # Sample action
+            dist = Categorical(probs)
             action = dist.sample()
 
-            return action.item(), dist.log_prob(action).item(), state_value.item()
-
-    def update_exploration(self, progress):
-        """Update entropy coefficient based on training progress"""
-        if progress <= self.exploration_fraction:
-            # Linearly anneal from initial to final value
-            alpha = 1.0 - (progress / self.exploration_fraction)
-            self.entropy_coef = self.final_entropy_coef + (self.initial_entropy_coef - self.final_entropy_coef) * alpha
-        else:
-            self.entropy_coef = self.final_entropy_coef
+            return action.item(), dist.log_prob(action).item(), value.item()
 
     def save_model(self, filename='model.pt'):
         """Save the current model state"""
@@ -348,6 +296,7 @@ class PPOTrainer:
         torch.save({
             'network_state_dict': self.network.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
             'episode_rewards': self.episode_rewards,
             'episode_lengths': self.episode_lengths,
             'energy_consumed': self.energy_consumed,
@@ -358,9 +307,11 @@ class PPOTrainer:
 
     def load_model(self, path):
         """Load a saved model state"""
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=self.device)
         self.network.load_state_dict(checkpoint['network_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         self.episode_rewards = checkpoint.get('episode_rewards', [])
         self.episode_lengths = checkpoint.get('episode_lengths', [])
         self.energy_consumed = checkpoint.get('energy_consumed', [])
@@ -369,95 +320,83 @@ class PPOTrainer:
         print(f"Model loaded from {path}")
 
     def train(self, n_episodes):
-        """Main training loop with improved exploration and model saving"""
-        print(f"Starting training... Logs will be saved to {self.run_dir}")
+        """Main training loop optimized for convergence"""
+        print(f"Starting training for {n_episodes} episodes...")
+        print(f"Logs will be saved to {self.run_dir}")
+        print(f"Observation space size: {self.env.get_observation_space_size()}")
+        print(f"Action space size: {len(self.env.possible_actions)}")
 
         best_reward = float('-inf')
         no_improvement_count = 0
+        update_count = 0
 
         for episode in range(n_episodes):
-            print(f'\nEpisode: {episode}')
-            # Update exploration
-            progress = episode / n_episodes
-            self.update_exploration(progress)
-
             episode_reward = 0
             episode_steps = 0
 
-            # Reset environment and memory
-            state, _ = self.env.reset()  # Drones will start with full battery
+            # Reset environment
+            state, _ = self.env.reset()
             self.memory.clear()
-            done = False
 
             # Collect trajectory
-            while not done and episode_steps < self.env.timestep_limit:
-                # Get action for each drone
+            while episode_steps < self.env.timestep_limit:
+                # Get actions for all agents
                 current_actions = {}
+                agent_states = []
+                agent_actions = []
+                agent_log_probs = []
+                agent_values = []
 
                 for agent in self.env.agents:
-                    action, log_prob, value = self.choose_action(state[agent])
-                    current_actions[agent] = action
+                    if agent in state:
+                        action, log_prob, value = self.choose_action(state[agent])
+                        current_actions[agent] = action
 
-                    # Store experience in memory
-                    self.memory.store(
-                        state[agent],
-                        action,
-                        log_prob,
-                        value,
-                        0.0,  # placeholder reward
-                        False  # placeholder done
-                    )
+                        # Store for memory
+                        agent_states.append(state[agent])
+                        agent_actions.append(action)
+                        agent_log_probs.append(log_prob)
+                        agent_values.append(value)
 
-                # Take action in environment
+                # Take step in environment
                 next_state, reward, termination, truncation, _ = self.env.step(current_actions)
 
-                # Update rewards and done flags in memory
-                for idx, agent in enumerate(self.env.agents):
+                # Store experiences
+                for i, agent in enumerate(self.env.agents):
                     if agent in reward:
-                        self.memory.rewards[-len(self.env.agents) + idx] = reward[agent]
-                        is_done = termination.get(agent, False) or truncation.get(agent, False)
-                        self.memory.dones[-len(self.env.agents) + idx] = is_done
+                        self.memory.store(
+                            agent_states[i],
+                            agent_actions[i],
+                            agent_log_probs[i],
+                            agent_values[i],
+                            reward[agent],
+                            termination.get(agent, False) or truncation.get(agent, False)
+                        )
                         episode_reward += reward[agent]
 
-                # Update state and check if done
+                # Update state
                 state = next_state
-                done = any(termination.values()) or any(truncation.values())
                 episode_steps += 1
 
-            # Handle early termination
-            if done and episode_steps < self.env.timestep_limit:
-                # Add small penalty for early termination due to battery depletion
-                for idx in range(len(self.memory.rewards) - len(self.env.agents), len(self.memory.rewards)):
-                    if self.memory.dones[idx]:
-                        self.memory.rewards[idx] -= 1.0
+                # Check if episode is done
+                if any(termination.values()) or any(truncation.values()):
+                    break
 
-            print(f'Terminated')
+            # Update policy if we have enough experiences
+            if len(self.memory.states) > self.batch_size:
+                self.update_policy()
+                update_count += 1
 
-            # Calculate returns and advantages
-            returns = self.compute_returns(self.memory.rewards)
-            advantages = self.compute_advantages(returns, self.memory.vals)
-
-            # Generate training batches
-            batches = self.memory.generate_batches()
-
-            # Update policy for each batch
-            for batch_indices in batches:
-                states = [self.memory.states[i] for i in batch_indices]
-                actions = [self.memory.actions[i] for i in batch_indices]
-                old_log_probs = [self.memory.probs[i] for i in batch_indices]
-                batch_returns = returns[batch_indices]
-                batch_advantages = advantages[batch_indices]
-
-                self.update_policy(states, actions, old_log_probs, batch_returns, batch_advantages)
-
-            # Log metrics
+            # Log episode metrics
             metrics = {
                 "episode_reward": episode_reward,
                 "episode_length": episode_steps,
                 **self.env.episode_metrics
             }
             self.log_metrics(metrics, episode)
-            print(f"Episode {episode}: Reward = {episode_reward:.2f}")
+
+            # Update learning rate
+            self.scheduler.step()
 
             # Save best model
             if episode_reward > best_reward:
@@ -467,169 +406,250 @@ class PPOTrainer:
             else:
                 no_improvement_count += 1
 
-            # Save periodic checkpoints
-            if episode % 100 == 0:
-                self.save_model(f'checkpoint_episode_{episode}.pt')
-
+            # Periodic logging and saving
             if episode % 10 == 0:
-                print(f"Episode {episode}: Reward = {episode_reward:.2f}, Steps = {episode_steps}, "
-                      f"Entropy = {self.entropy_coef:.3f}, Best = {best_reward:.2f}")
+                avg_reward = np.mean(self.episode_rewards[-10:]) if len(self.episode_rewards) >= 10 else episode_reward
+                avg_success = np.mean(self.successful_searches[-10:]) if len(self.successful_searches) >= 10 else 0
+                current_lr = self.optimizer.param_groups[0]['lr']
+
+                print(f"Episode {episode:4d}: Reward={episode_reward:6.2f}, "
+                      f"Avg10={avg_reward:6.2f}, Success={avg_success:4.2f}, "
+                      f"Steps={episode_steps:3d}, LR={current_lr:.2e}")
+
+            # Save checkpoints
+            if episode % 100 == 0 and episode > 0:
+                self.save_model(f'checkpoint_episode_{episode}.pt')
                 self.plot_metrics()
 
-        # Save final model
+        # Save final model and metrics
         self.save_model('final_model.pt')
-
-        # Final metrics plot
         self.plot_metrics()
+
         print(f"\nTraining completed! Results saved to {self.run_dir}")
+        self.print_final_stats()
 
-        # Calculate overall statistics
-        avg_reward_all_episodes = np.mean(self.episode_rewards)
-        min_reward = np.min(self.episode_rewards)
-        max_reward = np.max(self.episode_rewards)
-        avg_success_rate = np.mean(self.successful_searches) * 100
-        avg_episode_length = np.mean(self.episode_lengths)
-        avg_energy_consumed = np.mean(self.energy_consumed)
-        avg_recharge_count = np.mean(self.recharge_counts)
+    def update_policy(self):
+        """Update policy using PPO algorithm"""
+        # Convert memory to tensors
+        states = torch.FloatTensor(np.array(self.memory.states)).to(self.device)
+        actions = torch.LongTensor(self.memory.actions).to(self.device)
+        old_log_probs = torch.FloatTensor(self.memory.probs).to(self.device)
+        values = torch.FloatTensor(self.memory.vals).to(self.device)
+        rewards = torch.FloatTensor(self.memory.rewards).to(self.device)
+        dones = torch.BoolTensor(self.memory.dones).to(self.device)
 
-        # Log the results
-        print(f"Average reward over all episodes: {avg_reward_all_episodes:.2f}")
-        print(f"Success rate: {avg_success_rate:.2f}%")
-        print(f"Lowest reward: {min_reward:.2f}")
-        print(f"Highest reward: {max_reward:.2f}")
-        print(f"Average episode length: {avg_episode_length:.2f} steps")
-        print(f"Average energy consumed: {avg_energy_consumed:.2f}")
-        print(f"Average recharge count: {avg_recharge_count:.2f}")
+        # Compute returns and advantages
+        returns = self.compute_returns(rewards, dones, values)
+        advantages = returns - values
 
-        # Prepare results dictionary
-        final_metrics = {
-            "training_completed": True,
-            "env": "Energy",
-            "run_directory": self.run_dir,
-            "average_reward_all_episodes": avg_reward_all_episodes,
-            "success_rate": avg_success_rate,
-            "lowest_reward": min_reward,
-            "highest_reward": max_reward,
-            "average_episode_length": avg_episode_length,
-            "average_energy_consumed": avg_energy_consumed,
-            "average_recharge_count": avg_recharge_count,
-        }
+        if self.normalize_advantages:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-        # Save the results to a JSON file in the logs directory
-        metrics_filename = os.path.join(self.run_dir, 'final_metrics.json')
-        with open(metrics_filename, 'w') as f:
-            json.dump(final_metrics, f, indent=4)
+        # Update for multiple epochs
+        dataset_size = len(states)
 
-        print(f"\nFinal metrics saved to {metrics_filename}")
+        for epoch in range(self.n_epochs):
+            # Generate random indices
+            indices = torch.randperm(dataset_size)
 
-    def compute_returns(self, rewards):
-        """Compute discounted returns"""
-        returns = []
-        R = 0
-        for r in reversed(rewards):
-            R = r + self.gamma * R
-            returns.insert(0, R)
-        return torch.FloatTensor(returns).to(self.device)
+            # Process in batches
+            for start in range(0, dataset_size, self.batch_size):
+                end = min(start + self.batch_size, dataset_size)
+                batch_indices = indices[start:end]
 
-    def compute_advantages(self, returns, values):
-        """Compute advantages"""
-        advantages = returns - torch.FloatTensor(values).to(self.device)
-        return (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-
-    def update_policy(self, states, actions, old_log_probs, returns, advantages):
-        """Update policy using PPO"""
-        # Convert to tensors
-        states = [self.preprocess_state(s) for s in states]
-        actions = torch.LongTensor(actions).to(self.device)
-        old_log_probs = torch.FloatTensor(old_log_probs).to(self.device)
-
-        # Create dataset
-        dataset = list(zip(states, actions, old_log_probs, returns, advantages))
-
-        # Update for n_epochs
-        for _ in range(self.n_epochs):
-            # Sample random mini-batches
-            np.random.shuffle(dataset)
-            for i in range(0, len(dataset), self.batch_size):
-                batch = dataset[i:i + self.batch_size]
-                batch_states, batch_actions, batch_old_log_probs, batch_returns, batch_advantages = zip(*batch)
-
-                # Convert batch data to tensors
-                batch_actions = torch.stack([a if torch.is_tensor(a) else torch.tensor(a) for a in batch_actions]).to(self.device)
-                batch_old_log_probs = torch.stack([lp if torch.is_tensor(lp) else torch.tensor(lp) for lp in batch_old_log_probs]).to(self.device)
-                batch_returns = torch.stack([r if torch.is_tensor(r) else torch.tensor(r) for r in batch_returns]).to(self.device)
-                batch_advantages = torch.stack([adv if torch.is_tensor(adv) else torch.tensor(adv) for adv in batch_advantages]).to(self.device)
+                # Get batch data
+                batch_states = states[batch_indices]
+                batch_actions = actions[batch_indices]
+                batch_old_log_probs = old_log_probs[batch_indices]
+                batch_returns = returns[batch_indices]
+                batch_advantages = advantages[batch_indices]
 
                 # Forward pass
-                action_probs, values = zip(*[self.network(s) for s in batch_states])
-                action_probs = torch.stack(action_probs)
-                values = torch.cat(values)
+                logits, batch_values = self.network(batch_states)
 
-                # Calculate new log probs
-                dist = Categorical(action_probs)
+                # Calculate new log probabilities
+                dist = Categorical(logits=logits)
                 new_log_probs = dist.log_prob(batch_actions)
+                entropy = dist.entropy()
 
-                # Calculate ratio and clipped ratio
+                # Calculate ratio
                 ratio = torch.exp(new_log_probs - batch_old_log_probs)
-                clipped_ratio = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon)
 
-                # Calculate losses
-                policy_loss = -torch.min(
-                    ratio * batch_advantages,
-                    clipped_ratio * batch_advantages
-                ).mean()
+                # PPO loss
+                surr1 = ratio * batch_advantages
+                surr2 = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon) * batch_advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
 
-                value_loss = 0.5 * (values - batch_returns).pow(2).mean()
+                # Value loss
+                value_loss = 0.5 * (batch_values - batch_returns).pow(2).mean()
 
-                entropy_loss = -dist.entropy().mean()
+                # Entropy loss
+                entropy_loss = -entropy.mean()
 
                 # Total loss
-                loss = (
-                    policy_loss
-                    + self.value_coef * value_loss
-                    + self.entropy_coef * entropy_loss
-                )
+                total_loss = policy_loss + self.value_coef * value_loss + self.entropy_coef * entropy_loss
 
                 # Update network
                 self.optimizer.zero_grad()
-                loss.backward()
+                total_loss.backward()
                 nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-# Default hyperparameters
-hyperparameters = {
-    "learning_rate": 3e-4,
-    "gamma": 0.99,
-    "epsilon": 0.2,
-    "value_coef": 0.5,
-    "entropy_coef": 0.01,
-    "max_grad_norm": 0.5,
-    "batch_size": 64,
-    "n_epochs": 10,
-    "log_dir": "logs"
-}
+                # Store losses for logging
+                self.policy_losses.append(policy_loss.item())
+                self.value_losses.append(value_loss.item())
+                self.entropy_losses.append(entropy_loss.item())
+
+            # Early stopping based on KL divergence
+            with torch.no_grad():
+                logits, _ = self.network(states)
+                new_dist = Categorical(logits=logits)
+                new_log_probs = new_dist.log_prob(actions)
+                kl_div = (old_log_probs - new_log_probs).mean().item()
+
+                if kl_div > self.target_kl:
+                    print(f"Early stopping at epoch {epoch+1} due to KL divergence: {kl_div:.4f}")
+                    break
+
+    def compute_returns(self, rewards, dones, values):
+        """Compute GAE returns"""
+        returns = torch.zeros_like(rewards)
+        gae = 0
+
+        # Add final value for incomplete episodes
+        next_value = 0
+
+        for step in reversed(range(len(rewards))):
+            if step == len(rewards) - 1:
+                next_non_terminal = 1.0 - dones[step].float()
+                next_value = next_value
+            else:
+                next_non_terminal = 1.0 - dones[step].float()
+                next_value = values[step + 1]
+
+            delta = rewards[step] + self.gamma * next_value * next_non_terminal - values[step]
+            gae = delta + self.gamma * 0.95 * next_non_terminal * gae  # GAE lambda = 0.95
+            returns[step] = gae + values[step]
+
+        return returns
+
+    def print_final_stats(self):
+        """Print final training statistics"""
+        if len(self.episode_rewards) == 0:
+            print("No episodes completed.")
+            return
+
+        avg_reward = np.mean(self.episode_rewards)
+        std_reward = np.std(self.episode_rewards)
+        min_reward = np.min(self.episode_rewards)
+        max_reward = np.max(self.episode_rewards)
+
+        avg_success = np.mean(self.successful_searches)
+        total_success = np.sum(self.successful_searches)
+
+        avg_length = np.mean(self.episode_lengths)
+        avg_energy = np.mean(self.energy_consumed)
+        avg_recharge = np.mean(self.recharge_counts)
+
+        print(f"\n{'='*50}")
+        print(f"FINAL TRAINING STATISTICS")
+        print(f"{'='*50}")
+        print(f"Episodes completed: {len(self.episode_rewards)}")
+        print(f"Average reward: {avg_reward:.2f} ± {std_reward:.2f}")
+        print(f"Reward range: [{min_reward:.2f}, {max_reward:.2f}]")
+        print(f"Total successful searches: {total_success}")
+        print(f"Average successful searches per episode: {avg_success:.2f}")
+        print(f"Average episode length: {avg_length:.1f} steps")
+        print(f"Average energy consumed: {avg_energy:.1f}")
+        print(f"Average recharges per episode: {avg_recharge:.2f}")
+
+        # Last 100 episodes performance
+        if len(self.episode_rewards) >= 100:
+            recent_avg = np.mean(self.episode_rewards[-100:])
+            recent_success = np.mean(self.successful_searches[-100:])
+            print(f"\nLast 100 episodes:")
+            print(f"Average reward: {recent_avg:.2f}")
+            print(f"Average success rate: {recent_success:.2f}")
+
+        print(f"{'='*50}")
+
+        # Save final metrics
+        final_metrics = {
+            "training_completed": True,
+            "total_episodes": len(self.episode_rewards),
+            "average_reward": float(avg_reward),
+            "std_reward": float(std_reward),
+            "min_reward": float(min_reward),
+            "max_reward": float(max_reward),
+            "total_successful_searches": int(total_success),
+            "average_successful_searches": float(avg_success),
+            "average_episode_length": float(avg_length),
+            "average_energy_consumed": float(avg_energy),
+            "average_recharge_count": float(avg_recharge),
+            "run_directory": self.run_dir,
+        }
+
+        with open(os.path.join(self.run_dir, 'final_metrics.json'), 'w') as f:
+            json.dump(final_metrics, f, indent=4)
+
+
+# Training function
+def train_ppo(env, n_episodes=1000, **kwargs):
+    """Train PPO on the given environment"""
+
+    # Default hyperparameters optimized for convergence
+    default_hyperparams = {
+        "learning_rate": 3e-4,
+        "gamma": 0.99,
+        "epsilon": 0.2,
+        "value_coef": 0.5,
+        "entropy_coef": 0.01,
+        "max_grad_norm": 0.5,
+        "batch_size": 64,
+        "n_epochs": 4,
+        "log_dir": "logs",
+        "target_kl": 0.01,
+        "normalize_advantages": True,
+    }
+
+    # Update with user-provided parameters
+    default_hyperparams.update(kwargs)
+
+    # Create trainer
+    trainer = PPOTrainer(env, **default_hyperparams)
+
+    # Start training
+    trainer.train(n_episodes)
+
+    return trainer
+
 
 if __name__ == "__main__":
-    from ppo_env_energy import EnergyAwareDroneSwarmSearch
+    # Import the fixed environment
+    from ppo_env_energy import EnergyAwareDroneSwarmSearch2
 
-    # Create environment
-    env = EnergyAwareDroneSwarmSearch(
+    # Create environment with reasonable parameters
+    env = EnergyAwareDroneSwarmSearch2(
         grid_size=20,
-        render_mode="human",
-        render_grid=True,
-        render_gradient=True,
-        vector=(1, 1),
-        timestep_limit=300,
+        render_mode="ansi",
+        render_grid=False,
+        render_gradient=False,
+        timestep_limit=200,
         person_amount=1,
-        dispersion_inc=0.05,
-        person_initial_position=(10, 10),
         drone_amount=4,
         drone_speed=10,
-        probability_of_detection=1,
-        pre_render_time=0,
+        probability_of_detection=0.9,
         is_energy=True
     )
 
-    # Create trainer and start training
-    trainer = PPOTrainer(env, **hyperparameters)
-    trainer.train(n_episodes=1000)
+    # Train the model
+    trainer = train_ppo(
+        env,
+        n_episodes=3000,
+        learning_rate=3e-4,
+        batch_size=64,
+        n_epochs=4,
+        entropy_coef=0.02,  # Slightly higher for more exploration
+    )
+
+    print("Training completed successfully!")
