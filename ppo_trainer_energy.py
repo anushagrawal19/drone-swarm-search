@@ -151,7 +151,7 @@ class PPOTrainer:
             grid_size=env.grid_size,
             n_actions=len(env.possible_actions)
         ).to(self.device)
-        self.optimizer = optim.Adam(self.network.parameters(), lr=learning_rate)
+        self.optimizer = optim.SGD(self.network.parameters(), lr=learning_rate)
 
         # Initialize memory buffer
         self.memory = PPOMemory(batch_size)
@@ -518,11 +518,10 @@ hyperparameters = {
     "max_grad_norm": 0.5,
     "batch_size": 64,
     "n_epochs": 10,
-    "log_dir": "logs"  # Changed from use_wandb to log_dir
+    "log_dir": "logs"
 }
 
 if __name__ == "__main__":
-    # This section only runs if ppo_trainer.py is run directly
     from ppo_env_energy import EnergyAwareDroneSwarmSearch
 
     # Create environment
