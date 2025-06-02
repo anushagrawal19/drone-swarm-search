@@ -3,7 +3,7 @@ import numpy as np
 import random
 from DSSE.environment.constants import Actions
 
-class BaseDroneSwarmSearch2(DroneSwarmSearch):
+class BaseDroneSwarmSearch(DroneSwarmSearch):
     """Base version of DroneSwarmSearch with PPO-compatible policy - No energy/battery management"""
 
     def __init__(

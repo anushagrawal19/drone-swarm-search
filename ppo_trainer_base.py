@@ -607,10 +607,10 @@ def train_base_ppo(env, n_episodes=1000, **kwargs):
 
 if __name__ == "__main__":
     # Import the base environment
-    from ppo_env_base import BaseDroneSwarmSearch2
+    from ppo_env_base import BaseDroneSwarmSearch
 
     # Create environment with parameters matching the energy version
-    env = BaseDroneSwarmSearch2(
+    env = BaseDroneSwarmSearch(
         grid_size=20,
         render_mode="ansi",
         render_grid=False,

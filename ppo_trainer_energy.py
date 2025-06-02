@@ -626,19 +626,23 @@ def train_ppo(env, n_episodes=1000, **kwargs):
 
 if __name__ == "__main__":
     # Import the fixed environment
-    from ppo_env_energy import EnergyAwareDroneSwarmSearch2
+    from ppo_env_energy import EnergyAwareDroneSwarmSearch
 
     # Create environment with reasonable parameters
-    env = EnergyAwareDroneSwarmSearch2(
+    env = EnergyAwareDroneSwarmSearch(
         grid_size=20,
         render_mode="ansi",
         render_grid=False,
         render_gradient=False,
+        vector=(1, 1),
         timestep_limit=200,
         person_amount=1,
+        dispersion_inc=0.05,
+        person_initial_position=(10, 10),
         drone_amount=4,
         drone_speed=10,
         probability_of_detection=0.9,
+        pre_render_time=0,
         is_energy=True
     )
 
