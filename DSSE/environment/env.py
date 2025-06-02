@@ -260,22 +260,9 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
                 if (drone_x, drone_y) == recharge_base_position:
                     self.drone.recharge(idx)
 
-            is_searching = drone_action == Actions.SEARCH.value
+            is_searching = True
 
-            if drone_action != Actions.SEARCH.value:
-                new_position = self.move_drone((drone_x, drone_y), drone_action)
-                if not self.is_valid_position(new_position):
-                    rewards[agent] = self.reward_scheme.leave_grid
-                else:
-                    self.agents_positions[idx] = new_position
-                    rewards[agent] = self.reward_scheme.default
-
-                if self.is_energy == True:
-                    # Consume energy after every move
-                    self.drone.consume_energy(idx)
-
-                continue
-
+            # Perform search logic
             drone_found_person = False
             for human in self.persons_set:
                 drone_found_person = (
@@ -284,8 +271,9 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
                 if drone_found_person:
                     break
 
-            random_value = random()
+            # Check for detection
             if drone_found_person:
+                random_value = random()
                 max_detection_probability = min(human.get_mult() * self.drone.pod, 1)
 
                 if random_value <= max_detection_probability:
@@ -305,10 +293,24 @@ class DroneSwarmSearch(DroneSwarmSearchBase):
                         terminations[agent] = True
                         truncations[agent] = True
 
+                break
+
+            # Move the drone (if it hasn't already been terminated due to search)
+            if not person_found:
+                new_position = self.move_drone((drone_x, drone_y), drone_action)
+                if not self.is_valid_position(new_position):
+                    rewards[agent] = self.reward_scheme.leave_grid
+                else:
+                    self.agents_positions[idx] = new_position
+                    rewards[agent] = self.reward_scheme.default
+
+                if self.is_energy == True:
+                    # Consume energy after every move
+                    self.drone.consume_energy(idx)
+
         self.timestep += 1
 
-        # Get dummy infos
-        infos = {drone: {"Found": person_found} for drone in self.agents}
+        infos = {}
 
         self.render_step(any(terminations.values()), person_found)
 

@@ -123,7 +123,7 @@ class DroneSwarmSearchBase(ABC, ParallelEnv):
 
         self.pre_search_simulate()
         observations = self.create_observations()
-        infos = {drone: {"Found": False} for drone in self.agents}
+        infos = {}
         return observations, infos
 
     def is_valid_position_drones(self, positions: list[tuple[int, int]]) -> bool:

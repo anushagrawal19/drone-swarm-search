@@ -17,7 +17,6 @@ class Actions(Enum):
     UP_RIGHT = 5
     DOWN_LEFT = 6
     DOWN_RIGHT = 7
-    SEARCH = 8
 
 
 Reward = namedtuple(

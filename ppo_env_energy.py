@@ -26,7 +26,7 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         distance_reward_factor=10,  # Increased from 0.05 to encourage exploration
         recharge_reward=200,  # Increased significantly to make recharging more attractive
         low_battery_threshold=20,  # Increased to encourage earlier recharging
-        base_return_factor=2.0,  # New factor for base return rewards
+        base_return_factor=0.1,  # New factor for base return rewards
     ):
         super().__init__(
             grid_size=grid_size,
@@ -91,60 +91,53 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         # If base reward >= 1, target is found
         if reward >= 1:
             self.episode_metrics['successful_searches'] += 1
+            reward *= 1.5  # Scaling the reward when the target is found
 
+        # Battery management and probability matrix
         battery_level = self.drone.get_battery(agent)
         base_pos = self.recharge_base.get_position()
         prob_matrix = self.probability_matrix.get_matrix()
 
-        # Get probability values
+        # Get probability values for old and new positions
         old_prob = prob_matrix[old_pos[1], old_pos[0]]
         new_prob = prob_matrix[new_pos[1], new_pos[0]]
         prob_improvement = new_prob - old_prob
 
-        # Calculate distances
+        # Calculate distances to the base
         old_distance_to_base = abs(old_pos[0] - base_pos[0]) + abs(old_pos[1] - base_pos[1])
         new_distance_to_base = abs(new_pos[0] - base_pos[0]) + abs(new_pos[1] - base_pos[1])
         distance_improvement = old_distance_to_base - new_distance_to_base
 
         # Battery management rewards
         if battery_level <= self.low_battery_threshold:
-            # Low battery situation
+            # Low battery situation: Reward for reaching base when low
             if new_pos == base_pos:
-                # Good reward for reaching base when low
                 reward += self.recharge_reward
             else:
-                # Moderate penalty based on distance from base
-                reward -= self.base_return_factor * 0.5 * new_distance_to_base
-                # Reward for moving towards base
+                # Moderate penalty for being farther from the base
+                reward -= self.base_return_factor * new_distance_to_base
+                # Reward for moving closer to the base
                 if distance_improvement > 0:
-                    reward += self.base_return_factor * 0.5 * distance_improvement
+                    reward += self.base_return_factor * 5 * distance_improvement
 
         # Movement and exploration rewards (only if battery isn't critical)
         if battery_level > self.low_battery_threshold:
-            if action != Actions.SEARCH.value:
-                # Reward for moving towards higher probability areas
-                if prob_improvement > 0:
-                    reward += prob_improvement * self.distance_reward_factor * 100.0
-                elif prob_improvement >= 0:
-                    reward += 0.1 * self.distance_reward_factor  # Small reward for minimal improvement
+            # Reward for moving towards higher probability areas
+            if prob_improvement > 0:
+                reward += prob_improvement * self.distance_reward_factor * 100.0
+            elif prob_improvement >= 0:
+                reward += 0.1 * self.distance_reward_factor  # Small reward for minimal improvement
 
-                # Small reward for being in high probability areas
-                if new_prob > 0.002:
-                    reward += 5
-            else:
-                # Extra reward for searching in high probability areas
-                if new_prob > 0.002:
-                    reward += 10
+            # Small reward for being in high probability areas
+            if new_prob > 0.002:
+                reward += 5
 
-        # Base energy penalty
-        energy_penalty = -self.energy_penalty_factor * (1.0 - battery_level/100.0)
+        # Base energy penalty: Penalize based on battery level
+        energy_penalty = -self.energy_penalty_factor * (1.0 - battery_level / 100.0)
         reward += energy_penalty
 
-        # Extra reward for successful search actions
-        if action == Actions.SEARCH.value and base_reward > 0:
-            reward *= 1.5
-
         return reward
+
 
     def step(self, actions):
         """Override step to include energy-aware rewards and metrics tracking"""
