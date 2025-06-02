@@ -1,0 +1,12 @@
+{
+    "training_completed": true,
+    "total_episodes": 5000,
+    "average_reward": 62.6352182888071,
+    "std_reward": 44.40319837269855,
+    "min_reward": -39.12603749454012,
+    "max_reward": 229.95974057488098,
+    "total_successful_searches": 3972,
+    "average_successful_searches": 0.7944,
+    "average_episode_length": 69.2606,
+    "run_directory": "logs/base_env_20250602_183057"
+}
