@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import json
 import os
 from datetime import datetime
+from tqdm import tqdm
 
 class PPOMemory:
     def __init__(self, batch_size):
@@ -295,7 +296,7 @@ class PPOTrainer:
         best_reward = float('-inf')
         no_improvement_count = 0
 
-        for episode in range(n_episodes):
+        for episode in tqdm(range(n_episodes), desc="Training Episodes", unit="episode"):
             print(f'\nEpisode: {episode}')
             # Update exploration
             progress = episode / n_episodes
@@ -344,7 +345,7 @@ class PPOTrainer:
                 done = any(termination.values()) or any(truncation.values())
                 episode_steps += 1
 
-            print(f'Terminated')
+            print(f'Terminated\n')
 
             # Calculate returns and advantages
             returns = self.compute_returns(self.memory.rewards)
