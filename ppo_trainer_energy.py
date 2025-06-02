@@ -167,7 +167,7 @@ class PPOTrainer:
         self.episode_lengths = []
         self.energy_consumed = []
         self.recharge_counts = []
-        self.targets_found = []
+        self.successful_searches = []
 
         # Save hyperparameters
         self.save_hyperparameters({
@@ -199,8 +199,8 @@ class PPOTrainer:
                 self.energy_consumed.append(value)
             elif key == "recharge_count":
                 self.recharge_counts.append(value)
-            elif key == "targets_found":
-                self.targets_found.append(value)
+            elif key == "successful_searches":
+                self.successful_searches.append(value)
 
     def plot_metrics(self):
         """Plot and save training metrics"""
@@ -231,8 +231,8 @@ class PPOTrainer:
 
         # Plot targets found
         plt.subplot(2, 2, 4)
-        plt.plot(self.targets_found)
-        plt.title('Targets Found')
+        plt.plot(self.successful_searches)
+        plt.title('Successful Searches')
         plt.xlabel('Episode')
         plt.ylabel('Count')
 
@@ -247,7 +247,7 @@ class PPOTrainer:
                       self.episode_lengths,
                       self.energy_consumed,
                       self.recharge_counts,
-                      self.targets_found
+                      self.successful_searches
                   ]),
                   delimiter=',',
                   header='rewards,lengths,energy,recharges,targets',
@@ -300,7 +300,7 @@ class PPOTrainer:
             'episode_lengths': self.episode_lengths,
             'energy_consumed': self.energy_consumed,
             'recharge_counts': self.recharge_counts,
-            'targets_found': self.targets_found,
+            'successful_searches': self.successful_searches,
         }, path)
         print(f"Model saved to {path}")
 
@@ -313,7 +313,7 @@ class PPOTrainer:
         self.episode_lengths = checkpoint.get('episode_lengths', [])
         self.energy_consumed = checkpoint.get('energy_consumed', [])
         self.recharge_counts = checkpoint.get('recharge_counts', [])
-        self.targets_found = checkpoint.get('targets_found', [])
+        self.successful_searches = checkpoint.get('successful_searches', [])
         print(f"Model loaded from {path}")
 
     def train(self, n_episodes):
@@ -431,7 +431,7 @@ class PPOTrainer:
         self.plot_metrics()
         print(f"\nTraining completed! Results saved to {self.run_dir}")
         print(f"Average reward over last 100 episodes: {np.mean(self.episode_rewards[-100:]):.2f}")
-        print(f"Success rate: {np.mean(self.targets_found) * 100:.2f}%")
+        print(f"Success rate: {np.mean(self.successful_searches) * 100:.2f}%")
         print(f"Best reward achieved: {best_reward:.2f}")
 
     def compute_returns(self, rewards):

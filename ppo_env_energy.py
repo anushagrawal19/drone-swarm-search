@@ -24,9 +24,8 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         is_energy=True,
         energy_penalty_factor=1,  # Reduced from 0.1 to be less punishing
         distance_reward_factor=0.1,  # Increased from 0.05 to encourage exploration
-        recharge_reward=10.0,  # Increased significantly to make recharging more attractive
-        low_battery_threshold=30,  # Increased to encourage earlier recharging
-        battery_emergency_threshold=15,  # Emergency threshold for critical battery level
+        recharge_reward=200,  # Increased significantly to make recharging more attractive
+        low_battery_threshold=20,  # Increased to encourage earlier recharging
         base_return_factor=2.0,  # New factor for base return rewards
     ):
         super().__init__(
@@ -50,15 +49,12 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         self.distance_reward_factor = distance_reward_factor
         self.recharge_reward = recharge_reward
         self.low_battery_threshold = low_battery_threshold
-        self.battery_emergency_threshold = battery_emergency_threshold
         self.base_return_factor = base_return_factor
 
         # Additional metrics tracking
         self.episode_metrics = {
-            'targets_found': 0,
             'energy_consumed': 0,
             'recharge_count': 0,
-            'steps_with_low_battery': 0,
             'successful_searches': 0,
         }
 
@@ -75,15 +71,6 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
             (position[1] - base_pos[1]) / self.grid_size
         ])
 
-        # Add battery status flags
-        battery_status = np.zeros(3)  # [normal, low, emergency]
-        if battery_level <= self.battery_emergency_threshold/100.0:
-            battery_status[2] = 1.0  # emergency
-        elif battery_level <= self.low_battery_threshold/100.0:
-            battery_status[1] = 1.0  # low
-        else:
-            battery_status[0] = 1.0  # normal
-
         # Flatten and normalize position
         normalized_pos = np.array([
             position[0] / self.grid_size,
@@ -94,13 +81,17 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
             'position': normalized_pos,
             'probability_matrix': prob_matrix,
             'battery_level': np.array([battery_level]),
-            'battery_status': battery_status,
             'distance_to_base': distance_to_base
         }
 
     def calculate_energy_aware_reward(self, agent, base_reward, action, old_pos, new_pos):
         """Calculate energy-aware reward components with improved battery management"""
         reward = base_reward
+
+        # If base reward >= 1, target is found
+        if reward >= 1:
+            self.episode_metrics['successful_searches'] += 1
+
         battery_level = self.drone.get_battery(agent)
         base_pos = self.recharge_base.get_position()
         prob_matrix = self.probability_matrix.get_matrix()
@@ -116,19 +107,7 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         distance_improvement = old_distance_to_base - new_distance_to_base
 
         # Battery management rewards
-        if battery_level <= self.battery_emergency_threshold:
-            # Emergency battery situation
-            if new_pos == base_pos:
-                # Big reward for reaching base in emergency
-                reward += self.recharge_reward * 3.0
-            else:
-                # Strong penalty based on distance from base
-                reward -= self.base_return_factor * new_distance_to_base
-                # Reward for moving towards base
-                if distance_improvement > 0:
-                    reward += self.base_return_factor * distance_improvement
-
-        elif battery_level <= self.low_battery_threshold:
+        if battery_level <= self.low_battery_threshold:
             # Low battery situation
             if new_pos == base_pos:
                 # Good reward for reaching base when low
@@ -141,7 +120,7 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
                     reward += self.base_return_factor * 0.5 * distance_improvement
 
         # Movement and exploration rewards (only if battery isn't critical)
-        if battery_level > self.battery_emergency_threshold:
+        if battery_level > self.low_battery_threshold:
             if action != Actions.SEARCH.value:
                 # Reward for moving towards higher probability areas
                 if prob_improvement > 0:
@@ -149,11 +128,11 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
 
                 # Small reward for being in high probability areas
                 if new_prob > 0.5:
-                    reward += 0.5
+                    reward += 5
             else:
                 # Extra reward for searching in high probability areas
                 if new_prob > 0.5:
-                    reward += 1.0
+                    reward += 10
 
         # Base energy penalty
         energy_penalty = -self.energy_penalty_factor * (1.0 - battery_level/100.0)
@@ -192,8 +171,6 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
 
                 # Update metrics
                 self.episode_metrics['energy_consumed'] += 1
-                if self.drone.get_battery(idx) <= self.low_battery_threshold:
-                    self.episode_metrics['steps_with_low_battery'] += 1
                 if new_pos == self.recharge_base.get_position():
                     self.episode_metrics['recharge_count'] += 1
 
@@ -240,18 +217,16 @@ class EnergyAwareDroneSwarmSearch(DroneSwarmSearch):
         options['drones_positions'] = positions
 
         # Set person movement vector
-        vector_x = round(random.uniform(-0.5, 0.5), 1)
-        vector_y = round(random.uniform(-0.5, 0.5), 1)
+        vector_x = random.uniform(-0.5, 0.5)
+        vector_y = random.uniform(-0.5, 0.5)
         options['vector'] = (vector_x, vector_y)
 
         observations, info = super().reset(seed=seed, options=options)
 
         # Reset metrics
         self.episode_metrics = {
-            'targets_found': 0,
             'energy_consumed': 0,
             'recharge_count': 0,
-            'steps_with_low_battery': 0,
             'successful_searches': 0,
         }
 

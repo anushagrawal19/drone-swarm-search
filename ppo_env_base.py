@@ -41,7 +41,6 @@ class BaseDroneSwarmSearch(DroneSwarmSearch):
 
         # Additional metrics tracking
         self.episode_metrics = {
-            'targets_found': 0,
             'successful_searches': 0,
         }
 
@@ -68,6 +67,12 @@ class BaseDroneSwarmSearch(DroneSwarmSearch):
         old_person_positions = [(person.x, person.y) for person in self.persons_set]
 
         observations, rewards, terminations, truncations, infos = super().step(actions)
+
+        # Update metrics
+        for idx, agent in enumerate(self.agents):
+            if agent in rewards:  # Check if agent still active
+                if rewards[agent] >= 1:
+                    self.episode_metrics['successful_searches'] += 1
 
         # Verify person movement is correct (not towards recharge base)
         for person, old_pos in zip(list(self.persons_set), old_person_positions):
@@ -118,15 +123,14 @@ class BaseDroneSwarmSearch(DroneSwarmSearch):
         options['drones_positions'] = positions
 
         # Set person movement vector
-        vector_x = round(random.uniform(-0.5, 0.5), 1)
-        vector_y = round(random.uniform(-0.5, 0.5), 1)
+        vector_x = random.uniform(-0.5, 0.5)
+        vector_y = random.uniform(-0.5, 0.5)
         options['vector'] = (vector_x, vector_y)
 
         observations, info = super().reset(seed=seed, options=options)
 
         # Reset metrics
         self.episode_metrics = {
-            'targets_found': 0,
             'successful_searches': 0,
         }
 
