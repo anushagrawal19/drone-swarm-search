@@ -1,0 +1,14 @@
+{
+    "training_completed": true,
+    "total_episodes": 3000,
+    "average_reward": 50.96837807653563,
+    "std_reward": 29.894229733579486,
+    "min_reward": -47.764998896584636,
+    "max_reward": 212.32269027930514,
+    "total_successful_searches": 1352,
+    "average_successful_searches": 0.45066666666666666,
+    "average_episode_length": 127.37866666666666,
+    "average_energy_consumed": 509.51466666666664,
+    "average_recharge_count": 1.9453333333333334,
+    "run_directory": "logs/20250602_160047"
+}

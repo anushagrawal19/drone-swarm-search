@@ -1,0 +1,12 @@
+{
+    "training_completed": true,
+    "env": "Energy",
+    "run_directory": "logs/20250602_145846",
+    "average_reward_all_episodes": 578.0814129218448,
+    "success_rate": 9.8,
+    "lowest_reward": -277.3305968314008,
+    "highest_reward": 3159.3816677190016,
+    "average_episode_length": 104.392,
+    "average_energy_consumed": 417.568,
+    "average_recharge_count": 0.028
+}
