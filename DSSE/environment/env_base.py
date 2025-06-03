@@ -3,6 +3,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from pettingzoo import ParallelEnv
 from .entities.drone import DroneData
+from .entities.recharge_base import RechargeBase
 from .pygame_interface import PygameInterface
 from .constants import Actions
 from gymnasium.spaces import MultiDiscrete, Discrete, Tuple, Box
@@ -21,13 +22,17 @@ class DroneSwarmSearchBase(ABC, ParallelEnv):
         drone_speed=10,
         probability_of_detection=1,
         grid_cell_size=130,
+        is_energy=False,
     ) -> None:
         self.cell_size = grid_cell_size  # in meters
         self.grid_size = grid_size
         self._was_reset = False
         if not isinstance(drone_amount, int):
             raise ValueError("Drone amount must be an integer")
-    
+
+        # Determine if Energy-Aware
+        self.is_energy = is_energy
+
         self.drone = DroneData(
             amount=drone_amount,
             speed=drone_speed,
@@ -55,6 +60,10 @@ class DroneSwarmSearchBase(ABC, ParallelEnv):
         for i in range(self.drone.amount):
             agent_name = "drone" + str(i)
             self.possible_agents.append(agent_name)
+
+        # Initializing RechargeBase
+        if self.is_energy == True:
+            self.recharge_base = RechargeBase(self.grid_size)
 
         self.render_mode = render_mode
 
@@ -114,7 +123,7 @@ class DroneSwarmSearchBase(ABC, ParallelEnv):
 
         self.pre_search_simulate()
         observations = self.create_observations()
-        infos = {drone: {"Found": False} for drone in self.agents}
+        infos = {}
         return observations, infos
 
     def is_valid_position_drones(self, positions: list[tuple[int, int]]) -> bool:

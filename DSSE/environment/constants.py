@@ -19,15 +19,12 @@ class Actions(Enum):
     DOWN_RIGHT = 7
     SEARCH = 8
 
-
 Reward = namedtuple(
     "Reward",
     [
         "default",
         "leave_grid",
         "exceed_timestep",
-        "drones_collision",
-        "search_cell",
         "search_and_find",
     ],
 )

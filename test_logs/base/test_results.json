@@ -1,0 +1,11 @@
+{
+    "test_episodes": 100,
+    "average_reward": 83.50470132285787,
+    "std_reward": 68.32553014554799,
+    "min_reward": 13.511154128534848,
+    "max_reward": 241.0102889795581,
+    "average_success": 0.76,
+    "total_success": 76,
+    "average_length": 61.49,
+    "success_rate": 0.76
+}
