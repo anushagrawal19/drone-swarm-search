@@ -796,6 +796,8 @@ if __name__ == "__main__":
                         help='Path to model for testing')
     parser.add_argument('--episodes', type=int, default=None,
                         help='Number of episodes (default: 5000 for train, 100 for test)')
+    parser.add_argument('--render_mode', choices=['ansi', 'human'], default='ansi',
+                        help='render_mode: ansi or human')
 
     args = parser.parse_args()
 
@@ -805,10 +807,12 @@ if __name__ == "__main__":
     if args.mode == 'train':
         print("=== TRAINING MODE ===")
 
+        render_mode = args.render_mode
+
         # Create environment with reasonable parameters
         env = EnergyAwareDroneSwarmSearch(
             grid_size=20,
-            render_mode="ansi",
+            render_mode=render_mode,
             render_grid=False,
             render_gradient=False,
             vector=(1, 1),
@@ -852,10 +856,12 @@ if __name__ == "__main__":
             print(f"Error: Model file not found: {args.model_path}")
             exit(1)
 
+        render_mode = args.render_mode
+
         # Create test environment
         env = EnergyAwareDroneSwarmSearch(
             grid_size=20,
-            render_mode="ansi",
+            render_mode=render_mode,
             render_grid=False,
             render_gradient=False,
             vector=(1, 1),
