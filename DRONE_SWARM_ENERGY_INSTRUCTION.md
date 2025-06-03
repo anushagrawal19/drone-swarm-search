@@ -161,27 +161,4 @@ To change the FPS when in **human mode**, go to [DSSE/environment/pygame\_interf
 
 * **[ppo\_trainer\_energy.py](ppo_trainer_energy.py)**: Training and testing file for **PPO** with energy-aware logic.
 
-
-## How to Cite
-
-If you use this package, please consider citing it with the following BibTeX:
-
-```
-@software{Laffranchi_Falcao_DSSE_An_environment_2024,
-    author = {
-                Laffranchi Falcão, Renato and
-                Custódio Campos de Oliveira, Jorás and
-                Britto Aragão Andrade, Pedro Henrique and
-                Ribeiro Rodrigues, Ricardo and
-                Jailson Barth, Fabrício and
-                Basso Brancalion, José Fernando
-            },
-    doi = {10.5281/zenodo.12659848},
-    title = {{DSSE: An environment for simulation of reinforcement learning-empowered drone swarm maritime search and rescue missions}},
-    url = {https://doi.org/10.5281/zenodo.12659848},
-    version = {0.2.5},
-    month = jul,
-    year = {2024}
-}
-```
-
+---
