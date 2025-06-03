@@ -825,7 +825,7 @@ if __name__ == "__main__":
         # Create test environment
         env = BaseDroneSwarmSearch(
             grid_size=20,
-            render_mode="human",
+            render_mode="ansi",
             render_grid=True,
             render_gradient=True,
             vector=(1, 1),
