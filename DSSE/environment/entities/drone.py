@@ -51,13 +51,13 @@ class DroneData:
             self.batteries[drone_idx] -= self.energy_per_move
             # print(f"[DEBUG] Drone {drone_idx} battery after move: {self.batteries[drone_idx]}")
             return self.batteries[drone_idx]
-        print(f"[DEBUG] Drone {drone_idx} has run out of battery.")
+        # print(f"[DEBUG] Drone {drone_idx} has run out of battery.")
         return 0
 
     def recharge(self, drone_idx):
         # Recharge the specified drone to full battery
-        if self.batteries[drone_idx] <= 30:
-            print(f"[DEBUG] Drone {drone_idx} recharged to full battery: {self.batteries[drone_idx]}")
+        # if self.batteries[drone_idx] <= 20:
+        #     print(f"[DEBUG] Drone {drone_idx} recharged to full battery: {self.batteries[drone_idx]}")
         self.batteries[drone_idx] = self.battery_capacity
 
     def get_battery(self, drone_idx):

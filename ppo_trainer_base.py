@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import json
 import os
 from datetime import datetime
+import argparse
 
 class PPOMemory:
     def __init__(self, batch_size):
@@ -280,6 +281,17 @@ class BasePPOTrainer:
 
             return action.item(), dist.log_prob(action).item(), value.item()
 
+    def choose_action_deterministic(self, state):
+        """Select action deterministically (for testing)"""
+        with torch.no_grad():
+            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            logits, value = self.network(state_tensor)
+
+            # Take the action with highest probability
+            action = torch.argmax(logits, dim=-1)
+
+            return action.item(), 0.0, value.item()
+
     def save_model(self, filename='model.pt'):
         """Save the current model state"""
         path = os.path.join(self.run_dir, filename)
@@ -304,6 +316,111 @@ class BasePPOTrainer:
         self.episode_lengths = checkpoint.get('episode_lengths', [])
         self.successful_searches = checkpoint.get('successful_searches', [])
         print(f"Model loaded from {path}")
+
+    def test_model(self, n_episodes=100):
+        """Test the loaded model and collect metrics"""
+        print(f"Testing model for {n_episodes} episodes...")
+
+        # Clear existing metrics to start fresh for testing
+        test_rewards = []
+        test_lengths = []
+        test_successes = []
+
+        # Clear for testing
+        self.episode_rewards = []
+        self.episode_lengths = []
+        self.successful_searches = []
+
+        for episode in range(n_episodes):
+            episode_reward = 0
+            episode_steps = 0
+
+            # Reset environment
+            state, _ = self.env.reset()
+
+            # Run episode
+            while episode_steps < self.env.timestep_limit:
+                # Get actions for all agents
+                current_actions = {}
+
+                for agent in self.env.agents:
+                    if agent in state:
+                        action, _, _ = self.choose_action_deterministic(state[agent])
+                        current_actions[agent] = action
+
+                # Take step in environment
+                next_state, reward, termination, truncation, _ = self.env.step(current_actions)
+
+                # Accumulate rewards
+                for agent in self.env.agents:
+                    if agent in reward:
+                        episode_reward += reward[agent]
+
+                # Update state
+                state = next_state
+                episode_steps += 1
+
+                # Check if episode is done
+                if any(termination.values()) or any(truncation.values()):
+                    break
+
+            # Log episode metrics
+            metrics = {
+                "episode_reward": episode_reward,
+                "episode_length": episode_steps,
+                **self.env.episode_metrics
+            }
+            self.log_metrics(metrics, episode)
+
+            # Store test metrics
+            test_rewards.append(episode_reward)
+            test_lengths.append(episode_steps)
+            test_successes.append(self.env.episode_metrics.get('successful_searches', 0))
+
+            # Progress update
+            if (episode + 1) % 10 == 0:
+                avg_reward = np.mean(test_rewards[-10:])
+                avg_success = np.mean(test_successes[-10:])
+                print(f"Test Episode {episode+1:3d}: Reward={episode_reward:6.2f}, "
+                      f"Avg10={avg_reward:6.2f}, Success={avg_success:4.2f}, "
+                      f"Steps={episode_steps:3d}")
+
+        # Print test statistics
+        self.print_test_stats(test_rewards, test_lengths, test_successes)
+
+        # Generate test plots
+        self.plot_metrics()
+
+        # Save test results
+        test_results = {
+            "test_episodes": n_episodes,
+            "average_reward": float(np.mean(test_rewards)),
+            "std_reward": float(np.std(test_rewards)),
+            "min_reward": float(np.min(test_rewards)),
+            "max_reward": float(np.max(test_rewards)),
+            "average_success": float(np.mean(test_successes)),
+            "total_success": int(np.sum(test_successes)),
+            "average_length": float(np.mean(test_lengths)),
+            "success_rate": float(np.mean([1 if s > 0 else 0 for s in test_successes]))
+        }
+
+        with open(os.path.join(self.run_dir, 'test_results.json'), 'w') as f:
+            json.dump(test_results, f, indent=4)
+
+        return test_results
+
+    def print_test_stats(self, rewards, lengths, successes):
+        """Print test statistics"""
+        print(f"\n{'='*50}")
+        print(f"TEST RESULTS")
+        print(f"{'='*50}")
+        print(f"Episodes tested: {len(rewards)}")
+        print(f"Average reward: {np.mean(rewards):.2f} ± {np.std(rewards):.2f}")
+        print(f"Reward range: [{np.min(rewards):.2f}, {np.max(rewards):.2f}]")
+        print(f"Total successful searches: {np.sum(successes)}")
+        print(f"Success rate: {np.mean([1 if s > 0 else 0 for s in successes]):.2%}")
+        print(f"Average episode length: {np.mean(lengths):.1f} steps")
+        print(f"{'='*50}")
 
     def train(self, n_episodes):
         """Main training loop optimized for convergence"""
@@ -605,36 +722,146 @@ def train_base_ppo(env, n_episodes=1000, **kwargs):
     return trainer
 
 
+def test_ppo(env, model_path, n_episodes=100, **kwargs):
+    """Test a trained PPO model"""
+
+    # Default hyperparameters (should match training)
+    default_hyperparams = {
+        "learning_rate": 3e-4,
+        "gamma": 0.99,
+        "epsilon": 0.2,
+        "value_coef": 0.5,
+        "entropy_coef": 0.01,
+        "max_grad_norm": 0.5,
+        "batch_size": 64,
+        "n_epochs": 4,
+        "log_dir": "test_logs",
+        "target_kl": 0.01,
+        "normalize_advantages": True,
+    }
+
+    # Update with user-provided parameters
+    default_hyperparams.update(kwargs)
+
+    # Create trainer
+    trainer = BasePPOTrainer(env, **default_hyperparams)
+
+    # Load the trained model
+    trainer.load_model(model_path)
+
+    # Test the model
+    test_results = trainer.test_model(
+        n_episodes=n_episodes,
+    )
+
+    return trainer, test_results
+
+
 if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Train or test PPO model')
+    parser.add_argument('--mode', choices=['train', 'test'], default='train',
+                        help='Mode: train or test')
+    parser.add_argument('--model_path', type=str, default=None,
+                        help='Path to model for testing')
+    parser.add_argument('--episodes', type=int, default=None,
+                        help='Number of episodes (default: 5000 for train, 100 for test)')
+
+    args = parser.parse_args()
+
     # Import the base environment
     from ppo_env_base import BaseDroneSwarmSearch
 
-    # Create environment with parameters matching the energy version
-    env = BaseDroneSwarmSearch(
-        grid_size=20,
-        render_mode="ansi",
-        render_grid=False,
-        render_gradient=False,
-        vector=(1, 1),
-        timestep_limit=200,
-        person_amount=1,
-        dispersion_inc=0.05,
-        person_initial_position=(10, 10),
-        drone_amount=4,
-        drone_speed=10,
-        probability_of_detection=0.9,
-        pre_render_time=0,
-        is_energy=False,
-    )
+    if args.mode == 'train':
+        print("=== TRAINING MODE ===")
 
-    # Train the model with matching parameters
-    trainer = train_base_ppo(
-        env,
-        n_episodes=3000,
-        learning_rate=3e-4,
-        batch_size=64,
-        n_epochs=4,
-        entropy_coef=0.02,  # Slightly higher for more exploration
-    )
+        # Create environment with reasonable parameters
+        env = BaseDroneSwarmSearch(
+            grid_size=20,
+            render_mode="ansi",
+            render_grid=False,
+            render_gradient=False,
+            vector=(1, 1),
+            timestep_limit=200,
+            person_amount=1,
+            dispersion_inc=0.05,
+            person_initial_position=(10, 10),
+            drone_amount=4,
+            drone_speed=10,
+            probability_of_detection=0.9,
+            pre_render_time=0,
+            is_energy=False
+        )
 
-    print("Training completed successfully!")
+        # Set default episodes for training
+        n_episodes = args.episodes if args.episodes is not None else 5000
+
+        # Train the model
+        trainer = train_base_ppo(
+            env,
+            n_episodes=n_episodes,
+            learning_rate=3e-4,
+            batch_size=64,
+            n_epochs=4,
+            entropy_coef=0.02,  # Slightly higher for more exploration
+        )
+
+        print("Training completed successfully!")
+        print(f"Best model saved at: {os.path.join(trainer.run_dir, 'best_model.pt')}")
+        print(f"Final model saved at: {os.path.join(trainer.run_dir, 'final_model.pt')}")
+
+    elif args.mode == 'test':
+        print("=== TESTING MODE ===")
+
+        if args.model_path is None:
+            print("Error: --model_path is required for testing mode")
+            print("Example: python ppo_trainer_energy.py --mode test --model_path logs/20241231_120000/best_model.pt")
+            exit(1)
+
+        if not os.path.exists(args.model_path):
+            print(f"Error: Model file not found: {args.model_path}")
+            exit(1)
+
+        # Create test environment
+        env = BaseDroneSwarmSearch(
+            grid_size=20,
+            render_mode="human",
+            render_grid=True,
+            render_gradient=True,
+            vector=(1, 1),
+            timestep_limit=200,
+            person_amount=1,
+            dispersion_inc=0.05,
+            person_initial_position=(10, 10),
+            drone_amount=4,
+            drone_speed=10,
+            probability_of_detection=0.9,
+            pre_render_time=0,
+            is_energy=False
+        )
+
+        # Set default episodes for testing
+        n_episodes = args.episodes if args.episodes is not None else 100
+
+        print(f"Loading model from: {args.model_path}")
+        print(f"Testing for {n_episodes} episodes")
+
+        # Test the model
+        trainer, results = test_ppo(
+            env,
+            args.model_path,
+            n_episodes=n_episodes,
+        )
+
+        print("Testing completed successfully!")
+        print(f"Test results saved at: {os.path.join(trainer.run_dir, 'test_results.json')}")
+        print(f"Test plots saved at: {os.path.join(trainer.run_dir, 'training_metrics.png')}")
+
+        # Print summary
+        print(f"\n=== TEST SUMMARY ===")
+        print(f"Average reward: {results['average_reward']:.2f} ± {results['std_reward']:.2f}")
+        print(f"Success rate: {results['success_rate']:.2%}")
+
+    else:
+        print("Invalid mode. Use --mode train or --mode test")
+        exit(1)
