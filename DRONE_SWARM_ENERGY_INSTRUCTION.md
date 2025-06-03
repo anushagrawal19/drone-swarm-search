@@ -78,22 +78,11 @@ The following are the main training files:
 * [ppo\_env\_base.py](ppo_env_base.py)
 * [ppo\_trainer\_base.py](ppo_trainer_base.py)
 
-To run:
-
-```bash
-python3.11 ppo_trainer_base.py
-```
 
 ### For Energy Environment:
 
 * [ppo\_env\_energy.py](ppo_env_energy.py)
 * [ppo\_trainer\_energy.py](ppo_trainer_energy.py)
-
-To run:
-
-```bash
-python3.11 ppo_trainer_energy.py
-```
 
 
 ### Command-line Arguments:
@@ -134,9 +123,44 @@ To test the Energy Environment with a trained model:
 python3.11 ppo_trainer_energy.py --mode test --model_path logs/energy/best_model.pt --episodes 100 --render_mode ansi
 ```
 
+To train the Base Environment:
+
+```bash
+python3.11 ppo_trainer_base.py --mode train --episodes 5000 --render_mode ansi
+```
+
+To test the Base Environment with a trained model:
+
+```bash
+python3.11 ppo_trainer_base.py --mode test --model_path logs/base/best_model.pt --episodes 100 --render_mode ansi
+```
+
 ### Modify FPS in Human Mode:
 
 To change the FPS when in **human mode**, go to [DSSE/environment/pygame\_interface.py](DSSE/environment/pygame_interface.py) and modify the `FPS` variable.
+
+
+
+
+
+## Important Directories and Files
+
+* **[logs](logs) directory**: This is where all the training logs and models are stored.
+
+* **[test\_logs](test_logs) directory**: This is where all the test results are stored.
+
+* **[DSSE](DSSE) directory**: This is the main environment directory that contains the entities, simulation, environment logic, interface, etc.
+
+### Key Files in the Project:
+
+* **[ppo\_env\_base.py](ppo_env_base.py)**: Environment geared towards **PPO** (Proximal Policy Optimization) training.
+
+* **[ppo\_trainer\_base.py](ppo_trainer_base.py)**: Training and testing file for the base **PPO** model.
+
+* **[ppo\_env\_energy.py](ppo_env_energy.py)**: Environment geared towards **PPO** training, with energy logic included.
+
+* **[ppo\_trainer\_energy.py](ppo_trainer_energy.py)**: Training and testing file for **PPO** with energy-aware logic.
+
 
 ## How to Cite
 
@@ -160,11 +184,4 @@ If you use this package, please consider citing it with the following BibTeX:
     year = {2024}
 }
 ```
-
-
-
-
-
-
-
 
