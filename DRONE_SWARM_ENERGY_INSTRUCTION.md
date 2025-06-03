@@ -1,3 +1,7 @@
+## Acknowledgements
+
+This project is based on the work from the [drone-swarm-search](https://github.com/pfeinsper/drone-swarm-search) repository.
+
 # Installation and Setup Guide
 
 Follow these steps to install and run the project.
@@ -92,9 +96,47 @@ python3.11 ppo_trainer_energy.py
 ```
 
 
-## Acknowledgements
+### Command-line Arguments:
 
-This project is based on the work from the [drone-swarm-search](https://github.com/pfeinsper/drone-swarm-search) repository.
+The following arguments can be used when running the training scripts:
+
+* `--mode [train|test]`: Specifies whether to run in **train** or **test** mode.
+
+  **Default**: `train`
+
+* `--model_path [logs/base/best_model.pt | logs/energy/best_model.pt]`: Specifies the path to the model checkpoint file.
+  This needs to be specified **only in test mode**.
+
+* `--episodes [num]`: Specifies the number of episodes to run.
+
+  **Default**:
+  * `train`: 5000 episodes
+  * `test`: 100 episodes
+
+* `--render_mode [ansi|human]`: Specifies the rendering mode for the environment.
+
+  * `ansi`: No graphics.
+  * `human`: Displays a graphical interface.
+
+    **Default**: `ansi`
+
+### Example Usage:
+
+To train the Energy Environment:
+
+```bash
+python3.11 ppo_trainer_energy.py --mode train --episodes 5000 --render_mode ansi
+```
+
+To test the Energy Environment with a trained model:
+
+```bash
+python3.11 ppo_trainer_energy.py --mode test --model_path logs/energy/best_model.pt --episodes 100 --render_mode ansi
+```
+
+### Modify FPS in Human Mode:
+
+To change the FPS when in **human mode**, go to [DSSE/environment/pygame\_interface.py](DSSE/environment/pygame_interface.py) and modify the `FPS` variable.
 
 ## How to Cite
 
@@ -118,6 +160,8 @@ If you use this package, please consider citing it with the following BibTeX:
     year = {2024}
 }
 ```
+
+
 
 
 
